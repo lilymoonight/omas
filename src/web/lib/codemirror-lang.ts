@@ -1,19 +1,4 @@
-import { StreamLanguage } from '@codemirror/language';
-import { shell } from '@codemirror/legacy-modes/mode/shell';
-import { css } from '@codemirror/lang-css';
-import { go } from '@codemirror/lang-go';
-import { html } from '@codemirror/lang-html';
-import { javascript } from '@codemirror/lang-javascript';
-import { json } from '@codemirror/lang-json';
-import { markdown } from '@codemirror/lang-markdown';
-import { python } from '@codemirror/lang-python';
-import { rust } from '@codemirror/lang-rust';
-import { sql } from '@codemirror/lang-sql';
-import { xml } from '@codemirror/lang-xml';
-import { yaml } from '@codemirror/lang-yaml';
 import type { Extension } from '@codemirror/state';
-
-const shellLanguage = StreamLanguage.define(shell);
 
 const SHELL_FILENAMES = new Set([
   'bashrc',
@@ -24,61 +9,98 @@ const SHELL_FILENAMES = new Set([
   'envrc',
 ]);
 
-/** Pick a syntax-highlighting extension from the file path. */
-export function languageForPath(path: string): Extension[] {
+function extOf(path: string): { base: string; ext: string } {
   const base = path.split('/').pop()?.toLowerCase() ?? '';
   const ext = base.includes('.') ? (base.split('.').pop() ?? '') : '';
+  return { base, ext };
+}
+
+/** Load syntax-highlighting extensions on demand to keep the main bundle smaller. */
+export async function loadLanguageForPath(path: string): Promise<Extension[]> {
+  const { base, ext } = extOf(path);
 
   if (base === 'dockerfile' || base.startsWith('dockerfile.')) return [];
 
   if (SHELL_FILENAMES.has(ext) || SHELL_FILENAMES.has(base.replace(/^\./, ''))) {
-    return [shellLanguage];
+    const { StreamLanguage } = await import('@codemirror/language');
+    const { shell } = await import('@codemirror/legacy-modes/mode/shell');
+    return [StreamLanguage.define(shell)];
   }
 
   switch (ext) {
-    case 'ts':
+    case 'ts': {
+      const { javascript } = await import('@codemirror/lang-javascript');
       return [javascript({ typescript: true })];
-    case 'tsx':
+    }
+    case 'tsx': {
+      const { javascript } = await import('@codemirror/lang-javascript');
       return [javascript({ typescript: true, jsx: true })];
+    }
     case 'js':
     case 'mjs':
-    case 'cjs':
+    case 'cjs': {
+      const { javascript } = await import('@codemirror/lang-javascript');
       return [javascript()];
-    case 'jsx':
+    }
+    case 'jsx': {
+      const { javascript } = await import('@codemirror/lang-javascript');
       return [javascript({ jsx: true })];
+    }
     case 'json':
-    case 'jsonc':
+    case 'jsonc': {
+      const { json } = await import('@codemirror/lang-json');
       return [json()];
+    }
     case 'md':
-    case 'markdown':
+    case 'markdown': {
+      const { markdown } = await import('@codemirror/lang-markdown');
       return [markdown()];
-    case 'py':
+    }
+    case 'py': {
+      const { python } = await import('@codemirror/lang-python');
       return [python()];
+    }
     case 'css':
-    case 'scss':
+    case 'scss': {
+      const { css } = await import('@codemirror/lang-css');
       return [css()];
+    }
     case 'html':
     case 'htm':
-      return [html()];
     case 'svelte':
-    case 'vue':
+    case 'vue': {
+      const { html } = await import('@codemirror/lang-html');
       return [html()];
+    }
     case 'yaml':
-    case 'yml':
+    case 'yml': {
+      const { yaml } = await import('@codemirror/lang-yaml');
       return [yaml()];
-    case 'rs':
+    }
+    case 'rs': {
+      const { rust } = await import('@codemirror/lang-rust');
       return [rust()];
-    case 'go':
+    }
+    case 'go': {
+      const { go } = await import('@codemirror/lang-go');
       return [go()];
-    case 'sql':
+    }
+    case 'sql': {
+      const { sql } = await import('@codemirror/lang-sql');
       return [sql()];
+    }
     case 'sh':
     case 'bash':
-    case 'zsh':
-      return [shellLanguage];
+    case 'zsh': {
+      const { StreamLanguage } = await import('@codemirror/language');
+      const { shell } = await import('@codemirror/legacy-modes/mode/shell');
+      return [StreamLanguage.define(shell)];
+    }
     case 'xml':
-    case 'svg':
+    case 'svg': {
+      const { xml } = await import('@codemirror/lang-xml');
       return [xml()];
+    }
     default:
       return [];
   }

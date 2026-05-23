@@ -68,6 +68,32 @@ describe('PtySession (spawns real shell)', () => {
     }
   });
 
+  it('serializeSnapshot reports current dimensions', () => {
+    const s = new PtySession({ shell: '/bin/bash', cols: 100, rows: 30, scrollbackBytes: 4096 });
+    const snap = s.serializeSnapshot();
+    expect(snap.cols).toBe(100);
+    expect(snap.rows).toBe(30);
+    s.kill('SIGKILL');
+  });
+
+  it('serializeSnapshot includes live screen output', async () => {
+    const s = new PtySession({ shell: '/bin/bash', cols: 80, rows: 24, scrollbackBytes: 64 * 1024 });
+    try {
+      s.write('PS1= ; export PS1\n');
+      s.write('echo snap-marker-9c2e\n');
+      await waitFor(() => {
+        const snap = s.serializeSnapshot();
+        return snap.bytes.toString().includes('snap-marker-9c2e') ? true : undefined;
+      });
+      const snap = s.serializeSnapshot();
+      expect(snap.bytes.length).toBeGreaterThan(0);
+      expect(snap.bytes.toString()).toContain('snap-marker-9c2e');
+    } finally {
+      s.kill('SIGKILL');
+      await waitFor(() => (s.exited ? true : undefined));
+    }
+  });
+
   it('Ctrl+C is delivered to the foreground process group', async () => {
     const s = new PtySession({ shell: '/bin/bash', cols: 80, rows: 24, scrollbackBytes: 8192 });
     try {

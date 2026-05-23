@@ -6,13 +6,25 @@
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-05-23
+
 ### 修复
 
-- **TUI 视口乱跳**：attach 快照不再回放 2000 行 scrollback（只传当前屏）；修复 restore 时在数据到达前过早 `scrollToBottom` 的 race；跟随输出时保持滚到底。
+- **TUI 视口乱跳 / 乱换行**：attach 快照不再回放 scrollback；`hello` 到达前禁止向服务端发 resize（避免 mount 时 fit 改 PTY 列数与快照不一致）；快照写入后再 fit 并同步；等待 `document.fonts.ready` 后再校正列宽。
+
+### 优化
+
+- **工程质量**：CI 增加 `typecheck`；修复 `sessions` input、`service` systemd 等 TS 错误。
+- **终端布局**：抽取 `term-layout.ts` 共享常量；窄屏（≤768px）侧栏改为 drawer，终端全宽。
+- **前端体积**：CodeMirror 语言包按需加载；History 路由懒加载；Vite 拆分 codemirror/xterm chunk。
+- **历史扫描**：服务端 30s TTL 内存缓存；手动刷新带 `?refresh=1` bypass。
+- **测试**：attach 阶段、term-size、history cache、PTY serializeSnapshot 回归用例。
 
 ### 文档
 
 - **对比说明**：README / `docs/AI-WORKFLOW.md` 补充与 **CLI + tmux**（滚动 vs 复制）、IDE 的分工对比。
+
+[1.0.1]: https://github.com/lilymoonight/omas/releases/tag/v1.0.1
 
 ## [1.0.0] - 2026-05-23
 
@@ -173,6 +185,7 @@
 | Release 只有 commit 摘要 | 用户看不到 CHANGELOG。→ tag 发版时 **`extract-changelog.mjs`** 写入 Release body。 |
 | 误提交 `.claude/settings.local.json` | 本地 Claude 权限配置不应进 git。→ **`.gitignore` 忽略 `.claude/`**。 |
 | 测试写死 `/Users/…/` | 泄漏本机用户名。→ 用 **`mkdtemp` + 占位名**（如 `alice`）。 |
+| tmux 滚历史 vs 复制 | copy-mode 与 `mouse on` 难兼顾，Agent 日志难拷。→ omas 用 **xterm scrollback + 浏览器选区复制**（见 README）。 |
 
 ### 明确不做的事
 

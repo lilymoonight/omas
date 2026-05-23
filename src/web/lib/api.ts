@@ -111,8 +111,13 @@ export const api = {
     req<FsReadResp>('GET', `sessions/${id}/fs/read?path=${encodeURIComponent(path)}`),
   fsWrite: (id: string, path: string, content: string) =>
     req<{ ok: true; path: string; size: number }>('PUT', `sessions/${id}/fs/write`, { path, content }),
-  history: (sources?: HistorySource[]) => {
-    const q = sources && sources.length ? `?source=${sources.join(',')}` : '';
-    return req<{ sessions: HistorySession[]; aiSafeAvailable: boolean }>('GET', `history${q}`);
+  history: (opts?: HistorySource[] | { sources?: HistorySource[]; refresh?: boolean }) => {
+    const sources = Array.isArray(opts) ? opts : opts?.sources;
+    const refresh = !Array.isArray(opts) && opts?.refresh;
+    const params = new URLSearchParams();
+    if (sources?.length) params.set('source', sources.join(','));
+    if (refresh) params.set('refresh', '1');
+    const q = params.toString();
+    return req<{ sessions: HistorySession[]; aiSafeAvailable: boolean }>('GET', `history${q ? `?${q}` : ''}`);
   },
 };

@@ -165,8 +165,8 @@ function ensureConfigHint(configDir: string): void {
 }
 
 function systemdCtl(scope: ServiceScope, args: string[]): { ok: boolean; stderr: string } {
-  const base = scope === 'system' ? ['systemctl'] : ['systemctl', '--user'];
-  return run(base[0], [...base.slice(1), ...args]);
+  const prefix = scope === 'system' ? [] as const : ['--user'] as const;
+  return run('systemctl', [...prefix, ...args]);
 }
 
 function launchdDomain(): string {

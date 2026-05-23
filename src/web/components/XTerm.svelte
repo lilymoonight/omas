@@ -6,6 +6,8 @@
   import { WebglAddon } from '@xterm/addon-webgl';
   import { ClipboardAddon } from '@xterm/addon-clipboard';
   import { SessionSocket } from '../lib/ws.js';
+  import { canSyncTermSize, type AttachPhase } from '../lib/attach-sync.js';
+  import { TERM_FONT_SIZE, TERM_LINE_HEIGHT } from '../lib/term-layout.js';
   import '@xterm/xterm/css/xterm.css';
 
   interface Props {
@@ -25,6 +27,14 @@
   /** After a full snapshot restore, scroll to the live screen once writes land. */
   let pendingScrollBottom = false;
   let restoreScrollTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Ignore fit/resize echoes while applying server snapshot dimensions. */
+  let suppressResizeNotify = false;
+  /** Block server resize until hello (and snapshot restore, if any) completes. */
+  let attachPhase: AttachPhase = 'connecting';
+
+  function canSyncSize(): boolean {
+    return canSyncTermSize(attachPhase);
+  }
 
   function isViewportAtBottom(): boolean {
     try {
@@ -66,19 +76,48 @@
     return { cols: 80, rows: 24 };
   }
 
+  function applyTermSize(cols: number, rows: number): void {
+    if (term.cols === cols && term.rows === rows) return;
+    suppressResizeNotify = true;
+    try {
+      term.resize(cols, rows);
+    } finally {
+      suppressResizeNotify = false;
+    }
+  }
+
   function syncSizeToServer(): void {
+    if (!canSyncSize()) return;
     try {
       fit.fit();
       const { cols, rows } = currentSize();
-      socket?.send({ type: 'resize', cols, rows });
+      if (cols !== term.cols || rows !== term.rows) applyTermSize(cols, rows);
+      socket?.send({ type: 'resize', cols: term.cols, rows: term.rows });
     } catch { /* hidden */ }
+  }
+
+  function scheduleLayoutSettleSync(): void {
+    for (const ms of [80, 300]) {
+      setTimeout(() => {
+        if (canSyncSize()) syncSizeToServer();
+      }, ms);
+    }
+  }
+
+  function markAttachReady(): void {
+    attachPhase = 'ready';
+    syncSizeToServer();
+    scheduleLayoutSettleSync();
+    void document.fonts.ready.then(() => {
+      if (canSyncSize()) syncSizeToServer();
+    });
   }
 
   onMount(() => {
     term = new Terminal({
       fontFamily: '"JetBrains Mono","Fira Code","SF Mono",Menlo,Monaco,Consolas,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",monospace',
-      fontSize: 13,
-      lineHeight: 1.3,
+      fontSize: TERM_FONT_SIZE,
+      lineHeight: TERM_LINE_HEIGHT,
       cursorBlink: true,
       scrollback: 10000,
       allowProposedApi: true,
@@ -118,31 +157,32 @@
     } catch (err) {
       console.warn('WebGL renderer unavailable, falling back to canvas', err);
     }
-    // Fit several times: now, next paint, and after layout has settled. This
-    // covers the case where the surrounding flex layout finalizes after mount,
-    // which otherwise leaves the terminal undersized and the last row clipped.
-    const tryFit = () => { try { fit.fit(); } catch { /* */ } };
-    tryFit();
-    requestAnimationFrame(tryFit);
-    setTimeout(tryFit, 80);
-    setTimeout(tryFit, 300);
+    // Do not fit before hello — mount-time fit + onResize would resize the server
+    // before the snapshot lands, desyncing PTY cols from the serialized screen.
 
     socket = new SessionSocket(sessionId);
     socket.on('status', (s) => onStatus?.(s));
     socket.on('hello', (msg) => {
       if (msg.truncated) {
+        attachPhase = 'restoring';
         term.clear();
+        // Snapshot bytes were serialized at msg.cols × msg.rows. Resizing the
+        // server (or client fit) before they land desyncs TUI layout → bad wrap
+        // and viewport stuck at scrollback top.
+        applyTermSize(msg.cols, msg.rows);
         pendingScrollBottom = true;
         scheduleRestoreScrollFallback();
+      } else {
+        markAttachReady();
       }
-      syncSizeToServer();
       onClientCount?.(msg.clientCount);
     });
     socket.on('data', (bytes) => {
-      const stick = isViewportAtBottom();
+      const stick = !pendingScrollBottom && isViewportAtBottom();
       term.write(bytes, () => {
         if (pendingScrollBottom) {
           finishRestoreScroll();
+          requestAnimationFrame(() => markAttachReady());
         } else if (stick) {
           scrollToLiveScreen();
         }
@@ -153,19 +193,21 @@
     socket.on('exit', (info) => onExit?.(info));
 
     term.onData((data) => socket.send({ type: 'input', data }));
-    term.onResize(({ cols, rows }) => socket.send({ type: 'resize', cols, rows }));
+    term.onResize(({ cols, rows }) => {
+      if (!canSyncSize() || suppressResizeNotify) return;
+      socket.send({ type: 'resize', cols, rows });
+    });
     term.onTitleChange((t) => {
       // The shell can set its own title via OSC 0; mirror it to the server for the list view.
       socket.send({ type: 'title', title: t });
     });
 
     resizeObserver = new ResizeObserver(() => {
+      if (!canSyncSize()) return;
       syncSizeToServer();
     });
     resizeObserver.observe(host);
 
-    // Fit before connecting so the PTY gets a realistic width before the user runs TUI apps.
-    syncSizeToServer();
     socket.connect();
     setTimeout(() => term.focus(), 0);
   });

@@ -93,7 +93,7 @@ class DarwinPty extends EventEmitter implements IPty {
         cols: opts.cols,
         rows: opts.rows,
         name: opts.name,
-        data: (_term, data) => {
+        data: (_term: unknown, data: string | ArrayBuffer) => {
           if (this.exited) return;
           const buf = typeof data === 'string'
             ? Buffer.from(data, 'utf8')

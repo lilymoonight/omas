@@ -58,7 +58,7 @@
     if (manual || initialLoading) refreshing = true;
     if (manual) error = null;
     try {
-      await refreshHistoryCache({ silent: !manual && !initialLoading });
+      await refreshHistoryCache({ silent: !manual && !initialLoading, force: manual });
     } finally {
       initialLoading = false;
       refreshing = false;

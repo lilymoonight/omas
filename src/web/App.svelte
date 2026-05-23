@@ -5,7 +5,7 @@
   import List from './routes/List.svelte';
   import Terminal from './routes/Terminal.svelte';
   import Login from './routes/Login.svelte';
-  import History from './routes/History.svelte';
+  import type { Component } from 'svelte';
 
   let current = $state($route);
   route.subscribe((r) => (current = r));
@@ -17,7 +17,14 @@
     if (a === 'in' && current.name === 'login') navigate({ name: 'list' });
   });
 
-  onMount(checkAuth);
+  let HistoryRoute = $state<Component | null>(null);
+
+  onMount(() => {
+    void checkAuth();
+    void import('./routes/History.svelte').then((m) => {
+      HistoryRoute = m.default;
+    });
+  });
 </script>
 
 {#if authState === 'unknown'}
@@ -31,7 +38,11 @@
     <Terminal sessionId={current.id} />
   {/key}
 {:else if current.name === 'history'}
-  <History />
+  {#if HistoryRoute}
+    <HistoryRoute />
+  {:else}
+    <main class="boot">加载中…</main>
+  {/if}
 {:else if current.name === 'login'}
   <Login />
 {/if}

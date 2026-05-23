@@ -41,11 +41,11 @@ export function getHistorySnapshot(): HistorySnapshot {
   return snapshot;
 }
 
-export async function refreshHistoryCache(opts: { silent?: boolean } = {}): Promise<void> {
+export async function refreshHistoryCache(opts: { silent?: boolean; force?: boolean } = {}): Promise<void> {
   if (inFlight) return;
   inFlight = true;
   try {
-    const res = await api.history();
+    const res = await api.history({ refresh: opts.force });
     const changed = !historySessionsEqual(snapshot.sessions, res.sessions);
     if (changed || snapshot.lastFetchAt === 0) {
       snapshot = { sessions: res.sessions, lastFetchAt: Date.now(), error: null };

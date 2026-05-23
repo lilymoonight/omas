@@ -57,6 +57,11 @@
         mode = 'diff';
         return;
       }
+      if (resp.kind === 'diff') {
+        error = '差异视图无法直接编辑，请切换到终端';
+        mode = 'diff';
+        return;
+      }
       editContent = resp.content;
       savedContent = resp.content;
       editClipped = resp.clipped;

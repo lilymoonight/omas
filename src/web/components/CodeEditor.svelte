@@ -4,7 +4,7 @@
   import { EditorView, keymap } from '@codemirror/view';
   import { basicSetup } from 'codemirror';
   import { indentWithTab } from '@codemirror/commands';
-  import { languageForPath } from '../lib/codemirror-lang.js';
+  import { loadLanguageForPath } from '../lib/codemirror-lang.js';
 
   interface Props {
     path: string;
@@ -23,6 +23,7 @@
   let host = $state<HTMLDivElement | undefined>(undefined);
   let view: EditorView | null = null;
   let syncing = false;
+  let langLoadId = 0;
 
   const editableComp = new Compartment();
   const languageComp = new Compartment();
@@ -45,12 +46,12 @@
     '.cm-activeLine': { backgroundColor: '#f6f8fa' },
   });
 
-  function buildExtensions(): Extension[] {
+  function buildExtensions(lang: Extension[]): Extension[] {
     return [
       basicSetup,
       editorTheme,
       EditorView.lineWrapping,
-      languageComp.of(languageForPath(path)),
+      languageComp.of(lang),
       editableComp.of(EditorState.readOnly.of(readonly)),
       keymap.of([indentWithTab]),
       EditorView.updateListener.of((u) => {
@@ -60,11 +61,19 @@
     ];
   }
 
-  onMount(() => {
+  async function applyLanguage(nextPath: string): Promise<void> {
+    const id = ++langLoadId;
+    const lang = await loadLanguageForPath(nextPath);
+    if (id !== langLoadId || !view) return;
+    view.dispatch({ effects: languageComp.reconfigure(lang) });
+  }
+
+  onMount(async () => {
     if (!host) return;
+    const lang = await loadLanguageForPath(path);
     view = new EditorView({
       parent: host,
-      state: EditorState.create({ doc: value, extensions: buildExtensions() }),
+      state: EditorState.create({ doc: value, extensions: buildExtensions(lang) }),
     });
   });
 
@@ -75,7 +84,7 @@
 
   $effect(() => {
     if (!view) return;
-    view.dispatch({ effects: languageComp.reconfigure(languageForPath(path)) });
+    void applyLanguage(path);
   });
 
   $effect(() => {

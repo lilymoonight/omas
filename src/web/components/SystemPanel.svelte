@@ -104,7 +104,8 @@
     {/if}
 
     {#if stats.gpus && stats.gpus.length > 0}
-      {@const model = stats.gpus[0].name.replace(/^NVIDIA\s+/i, '')}
+      {@const gpu0 = stats.gpus[0]!}
+      {@const model = gpu0.name.replace(/^NVIDIA\s+/i, '')}
       <section class="gpu-section">
         <div class="row">
           <span class="row-label"><Icon name="zap" size={13} /> GPU</span>
