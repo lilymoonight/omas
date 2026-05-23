@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### 文档
+
+- **English README**：新增 [README.en.md](./README.en.md)，中英文 README 互相链接。
+
 ## [1.0.1] - 2026-05-23
 
 ### 修复
