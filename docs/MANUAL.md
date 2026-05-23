@@ -1,6 +1,6 @@
 # omas 完整使用手册
 
-omas（oh-my-agent-shell）是 **Agent 时代的轻量 Shell 控制台**：Terminal 居中，帮你自动分离多路会话；浏览器标签用完即关，Agent 可在后台继续跑；自动扫描 Claude/Cursor 等历史并一键恢复；侧栏支持改小文件与 review AI 的 Git 改动。
+omas（**o**h-**m**y-**a**gent-**s**hell 的缩写）是 **Agent 时代的轻量 Shell 控制台**：Terminal 居中，帮你自动分离多路会话；浏览器标签用完即关，Agent 可在后台继续跑；自动扫描 Claude/Cursor 等历史并一键恢复；侧栏支持改小文件与 review AI 的 Git 改动。
 
 支持断线重连、nginx 子路径与 VSCode 端口转发。单文件二进制、自托管。
 

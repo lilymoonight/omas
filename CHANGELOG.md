@@ -8,6 +8,7 @@
 
 ### 文档
 
+- **命名说明**：README 明确 **omas** 为 **oh-my-agent-shell** 的缩写（o-m-a-s）。
 - **English README**：新增 [README.en.md](./README.en.md)，中英文 README 互相链接。
 
 ## [1.0.1] - 2026-05-23

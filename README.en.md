@@ -136,8 +136,8 @@ npm test && npm run typecheck
 
 | Name | Meaning |
 |------|---------|
-| **omas** | Product name, CLI command, GitHub repo [`lilymoonight/omas`](https://github.com/lilymoonight/omas) |
-| **oh-my-agent-shell** | npm package name (legacy) |
+| **omas** | Product name, CLI command, and GitHub repo [`lilymoonight/omas`](https://github.com/lilymoonight/omas); **abbreviation of `oh-my-agent-shell`** (**o**h-**m**y-**a**gent-**s**hell) |
+| **oh-my-agent-shell** | Full project name; still used for the npm package and default config dir (`~/.config/oh-my-agent-shell`) |
 
 ## License
 

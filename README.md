@@ -138,8 +138,8 @@ npm test && npm run typecheck
 
 | 名称 | 含义 |
 |------|------|
-| **omas** | 产品名、CLI 命令与 GitHub 仓库 [`lilymoonight/omas`](https://github.com/lilymoonight/omas) |
-| **oh-my-agent-shell** | npm 包名（历史遗留） |
+| **omas** | 产品名、CLI 命令与 GitHub 仓库 [`lilymoonight/omas`](https://github.com/lilymoonight/omas)；**`oh-my-agent-shell` 的缩写**（取首字母 **o**h-**m**y-**a**gent-**s**hell） |
+| **oh-my-agent-shell** | 完整项目名；npm 包名与默认配置目录（`~/.config/oh-my-agent-shell`）仍用此名 |
 
 ## License
 
