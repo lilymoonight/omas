@@ -3,7 +3,15 @@
   import { api, type FsEntry } from '../lib/api.js';
   import { fsEntriesEqual } from '../lib/stable-update.js';
   import Icon from './Icon.svelte';
-  import FileEditorModal from './FileEditorModal.svelte';
+  import type { Component } from 'svelte';
+
+  let EditorModal = $state<Component<{
+    sessionId: string;
+    path: string;
+    root: string;
+    onClose: () => void;
+    onSaved?: () => void;
+  }> | null>(null);
 
   interface Props { sessionId: string; }
   const { sessionId }: Props = $props();
@@ -43,8 +51,10 @@
         truncatedDirs = new Set();
       }
       await loadDir(ROOT_KEY, { force: true, silent: !resetExpanded && !cwdChanged });
-      for (const dir of expanded) {
-        if (dir !== ROOT_KEY) await loadDir(dir, { force: true, silent: true });
+      if (resetExpanded || cwdChanged) {
+        for (const dir of expanded) {
+          if (dir !== ROOT_KEY) await loadDir(dir, { force: true, silent: true });
+        }
       }
     } catch (e) {
       error = String(e);
@@ -97,7 +107,10 @@
     expanded = next;
   }
 
-  function openFile(filePath: string) {
+  async function openFile(filePath: string) {
+    if (!EditorModal) {
+      EditorModal = (await import('./FileEditorModal.svelte')).default;
+    }
     editing = filePath;
   }
 </script>
@@ -186,8 +199,8 @@
   {/if}
 {/snippet}
 
-{#if editing && root}
-  <FileEditorModal
+{#if editing && root && EditorModal}
+  <EditorModal
     {sessionId}
     path={editing}
     {root}

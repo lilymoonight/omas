@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { SessionHub } from '../pty/hub.js';
 import { shellCwd } from '../pty/shell-cwd.js';
+import { TtlCache } from '../lib/ttl-cache.js';
 
 const exec = promisify(execFile);
 
@@ -30,6 +31,7 @@ export type GitStatus =
     }
   | { available: false; reason: 'not_a_repo' | 'git_not_installed' | 'error' | 'no_cwd'; message?: string; cwd?: string };
 
+const gitStatusCache = new TtlCache<string, GitStatus>(2000);
 const MAX_FILES = 500;
 
 async function gitStatus(cwd: string): Promise<GitStatus> {
@@ -92,7 +94,11 @@ export function registerGitRoutes(app: App, hub: SessionHub): void {
     // Prefer the shell's *current* cwd (tracks `cd` commands) over the spawn-time cwd.
     const cwd = (await shellCwd(session.pid)) ?? session.cwd;
     if (!cwd) return reply.send({ available: false, reason: 'no_cwd' });
+    const cacheKey = `${id}\0${cwd}`;
+    const cached = gitStatusCache.get(cacheKey);
+    if (cached) return cached;
     const result = await gitStatus(cwd);
+    gitStatusCache.set(cacheKey, result);
     return result;
   });
 }

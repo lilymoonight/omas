@@ -91,8 +91,14 @@ async function readGpus(): Promise<Gpu[] | null> {
   return gpuLastGood?.gpus ?? null;
 }
 
+let statsCache: { at: number; body: Record<string, unknown> } | null = null;
+const STATS_CACHE_MS = 2000;
+
 export function registerSystemRoutes(app: App): void {
   app.get('/api/system/stats', async () => {
+    const now = Date.now();
+    if (statsCache && now - statsCache.at < STATS_CACHE_MS) return statsCache.body;
+
     const cur = cpuSample();
     let cpuPercent = 0;
     if (lastCpu) {
@@ -116,7 +122,7 @@ export function registerSystemRoutes(app: App): void {
     const totalmem = os.totalmem();
     const freemem = os.freemem();
     const gpus = await readGpus();
-    return {
+    const body = {
       cpu: { percent: cpuPercent, cores: os.cpus().length },
       memory: { total: totalmem, free: freemem, used: totalmem - freemem },
       load: os.loadavg(),
@@ -127,5 +133,7 @@ export function registerSystemRoutes(app: App): void {
       hostname: os.hostname(),
       platform: `${os.type()} ${os.release()}`,
     };
+    statsCache = { at: now, body };
+    return body;
   });
 }

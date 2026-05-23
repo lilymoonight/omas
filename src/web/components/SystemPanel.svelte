@@ -5,7 +5,8 @@
 
   let stats = $state<SystemStats | null>(null);
   let error = $state<string | null>(null);
-  let timer: ReturnType<typeof setInterval>;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let onVisChange: (() => void) | undefined;
 
   async function refresh() {
     try {
@@ -17,10 +18,19 @@
   }
 
   onMount(() => {
-    refresh();
-    timer = setInterval(refresh, 2000);
+    void refresh();
+    timer = setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh();
+    }, 3000);
+    onVisChange = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    document.addEventListener('visibilitychange', onVisChange);
   });
-  onDestroy(() => clearInterval(timer));
+  onDestroy(() => {
+    if (timer) clearInterval(timer);
+    if (onVisChange) document.removeEventListener('visibilitychange', onVisChange);
+  });
 
   function fmtBytes(n: number): string {
     if (n < 1024) return `${n} B`;

@@ -3,9 +3,10 @@
   import { route, navigate } from './lib/router.js';
   import { auth, checkAuth } from './lib/stores.js';
   import List from './routes/List.svelte';
-  import Terminal from './routes/Terminal.svelte';
   import Login from './routes/Login.svelte';
   import type { Component } from 'svelte';
+
+  let TerminalRoute = $state<Component<{ sessionId: string }> | null>(null);
 
   let current = $state($route);
   route.subscribe((r) => (current = r));
@@ -24,6 +25,9 @@
     void import('./routes/History.svelte').then((m) => {
       HistoryRoute = m.default;
     });
+    void import('./routes/Terminal.svelte').then((m) => {
+      TerminalRoute = m.default;
+    });
   });
 </script>
 
@@ -34,9 +38,13 @@
 {:else if current.name === 'list'}
   <List />
 {:else if current.name === 'terminal'}
-  {#key current.id}
-    <Terminal sessionId={current.id} />
-  {/key}
+  {#if TerminalRoute}
+    {#key current.id}
+      <TerminalRoute sessionId={current.id} />
+    {/key}
+  {:else}
+    <main class="boot">加载中…</main>
+  {/if}
 {:else if current.name === 'history'}
   {#if HistoryRoute}
     <HistoryRoute />

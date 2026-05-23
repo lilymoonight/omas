@@ -67,6 +67,9 @@ export class PtySession extends EventEmitter {
    *  stream which would re-trigger their clear-screen escapes. */
   private readonly headless: HeadlessTerminal;
   private readonly serializer: SerializeAddon;
+  private headlessQueue: Buffer[] = [];
+  private headlessTimer: ReturnType<typeof setTimeout> | null = null;
+  private snapshotCache: { bytes: Buffer; cols: number; rows: number } | null = null;
 
   get pid(): number | null { return this.pty?.pid ?? null; }
 
@@ -108,10 +111,7 @@ export class PtySession extends EventEmitter {
     });
     this.pty.onData((buf: Buffer) => {
       this.ring.append(buf);
-      // Feed the headless mirror in parallel so a fresh attach can recover
-      // the live screen instead of replaying raw bytes (which would re-run
-      // TUI clear-screen escapes and destroy the visible state).
-      this.headless.write(buf);
+      this.queueHeadless(buf);
       this.lastActivityAt = new Date();
       this.emit('data', buf);
     });
@@ -120,6 +120,7 @@ export class PtySession extends EventEmitter {
       this.exitCode = exitCode;
       this.exitSignal = signal != null ? String(signal) : null;
       this.pty = null;
+      this.flushHeadless();
       try { this.headless.dispose(); } catch { /* */ }
       this.emit('exit', { code: this.exitCode, signal: this.exitSignal });
     });
@@ -152,7 +153,35 @@ export class PtySession extends EventEmitter {
       // pty may have just exited; ignore
     }
     try { this.headless.resize(cols, rows); } catch { /* */ }
+    this.invalidateSnapshot();
     this.emit('resize', cols, rows);
+  }
+
+  private invalidateSnapshot(): void {
+    this.snapshotCache = null;
+  }
+
+  private queueHeadless(buf: Buffer): void {
+    this.headlessQueue.push(buf);
+    this.invalidateSnapshot();
+    if (!this.headlessTimer) {
+      this.headlessTimer = setTimeout(() => this.flushHeadless(), 16);
+    }
+  }
+
+  private flushHeadless(): void {
+    if (this.headlessTimer) {
+      clearTimeout(this.headlessTimer);
+      this.headlessTimer = null;
+    }
+    if (this.headlessQueue.length === 0) return;
+    const merged = Buffer.concat(this.headlessQueue);
+    this.headlessQueue = [];
+    try {
+      this.headless.write(merged);
+    } catch {
+      /* headless may be disposed */
+    }
   }
 
   /** Serialize the live screen for attach/reconnect. Scrollback is omitted on
@@ -161,13 +190,23 @@ export class PtySession extends EventEmitter {
    *  The headless mirror still accumulates scrollback for debugging; only
    *  the active buffer is shipped to clients. */
   serializeSnapshot(): { bytes: Buffer; cols: number; rows: number } {
+    this.flushHeadless();
+    if (
+      this.snapshotCache
+      && this.snapshotCache.cols === this.cols
+      && this.snapshotCache.rows === this.rows
+    ) {
+      return this.snapshotCache;
+    }
     let s = '';
     try {
       s = this.serializer.serialize({ scrollback: 0 });
     } catch {
       // Headless terminal/serializer can throw on edge cases; fall back to empty.
     }
-    return { bytes: Buffer.from(s, 'utf8'), cols: this.cols, rows: this.rows };
+    const result = { bytes: Buffer.from(s, 'utf8'), cols: this.cols, rows: this.rows };
+    this.snapshotCache = result;
+    return result;
   }
 
   setTitle(title: string): void {

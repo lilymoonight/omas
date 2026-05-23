@@ -4,9 +4,11 @@ import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
 
-/** Read the shell process cwd (tracks `cd`), or null if unavailable. */
-export async function shellCwd(pid: number | null): Promise<string | null> {
-  if (!pid) return null;
+/** Side-panel polling hits cwd on every fs/git request; cache to avoid lsof storms on macOS. */
+const CWD_CACHE_TTL_MS = 1500;
+const cwdCache = new Map<number, { at: number; cwd: string | null }>();
+
+async function shellCwdUncached(pid: number): Promise<string | null> {
   if (process.platform === 'linux') {
     try {
       return await fs.readlink(`/proc/${pid}/cwd`);
@@ -26,4 +28,19 @@ export async function shellCwd(pid: number | null): Promise<string | null> {
     }
   }
   return null;
+}
+
+/** Read the shell process cwd (tracks `cd`), or null if unavailable. */
+export async function shellCwd(pid: number | null): Promise<string | null> {
+  if (!pid) return null;
+  const hit = cwdCache.get(pid);
+  if (hit && Date.now() - hit.at < CWD_CACHE_TTL_MS) return hit.cwd;
+  const cwd = await shellCwdUncached(pid);
+  cwdCache.set(pid, { at: Date.now(), cwd });
+  return cwd;
+}
+
+export function clearShellCwdCache(pid?: number): void {
+  if (pid == null) cwdCache.clear();
+  else cwdCache.delete(pid);
 }

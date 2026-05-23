@@ -75,13 +75,7 @@ export function registerFsRoutes(app: App, hub: SessionHub): void {
         if (d.isDirectory()) {
           entries.push({ name: d.name, path: rel, kind: 'dir' });
         } else if (d.isFile()) {
-          let size: number | undefined;
-          try {
-            size = (await fsp.stat(abs)).size;
-          } catch {
-            size = undefined;
-          }
-          entries.push({ name: d.name, path: rel, kind: 'file', size });
+          entries.push({ name: d.name, path: rel, kind: 'file' });
         }
       }
 

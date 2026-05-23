@@ -8,6 +8,12 @@
   import { SessionSocket } from '../lib/ws.js';
   import { canSyncTermSize, type AttachPhase } from '../lib/attach-sync.js';
   import { TERM_FONT_SIZE, TERM_LINE_HEIGHT } from '../lib/term-layout.js';
+  import {
+    pinLiveScreen,
+    scrollToLiveScreen,
+    shouldStickToLiveScreen,
+  } from '../lib/term-viewport.js';
+  import { createTermWriteBatch, type TermWriteBatch } from '../lib/term-write-batch.js';
   import '@xterm/xterm/css/xterm.css';
 
   interface Props {
@@ -23,10 +29,17 @@
   let term: Terminal;
   let fit: FitAddon;
   let socket: SessionSocket;
+  let writeBatch: TermWriteBatch | undefined;
   let resizeObserver: ResizeObserver;
+  let resizeRaf: number | undefined;
+  let syncDebounceTimer: ReturnType<typeof setTimeout> | undefined;
   /** After a full snapshot restore, scroll to the live screen once writes land. */
   let pendingScrollBottom = false;
   let restoreScrollTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Keep viewport on the live screen through fit/resize during attach settle. */
+  let stickToLiveScreen = false;
+  /** First attach settle (fonts + delayed fit) runs once per mount. */
+  let attachSettled = false;
   /** Ignore fit/resize echoes while applying server snapshot dimensions. */
   let suppressResizeNotify = false;
   /** Block server resize until hello (and snapshot restore, if any) completes. */
@@ -36,17 +49,12 @@
     return canSyncTermSize(attachPhase);
   }
 
-  function isViewportAtBottom(): boolean {
-    try {
-      const buf = term.buffer.active;
-      return buf.viewportY >= buf.baseY;
-    } catch {
-      return true;
-    }
+  function liveFlags() {
+    return { stickToLiveScreen, pendingScrollBottom };
   }
 
-  function scrollToLiveScreen(): void {
-    try { term.scrollToBottom(); } catch { /* */ }
+  function pinLive() {
+    pinLiveScreen(term, liveFlags());
   }
 
   function finishRestoreScroll(): void {
@@ -55,7 +63,7 @@
       clearTimeout(restoreScrollTimer);
       restoreScrollTimer = undefined;
     }
-    scrollToLiveScreen();
+    pinLive();
   }
 
   function scheduleRestoreScrollFallback(): void {
@@ -86,14 +94,40 @@
     }
   }
 
-  function syncSizeToServer(): void {
-    if (!canSyncSize()) return;
+  function fitToHost(): void {
+    suppressResizeNotify = true;
     try {
       fit.fit();
       const { cols, rows } = currentSize();
-      if (cols !== term.cols || rows !== term.rows) applyTermSize(cols, rows);
-      socket?.send({ type: 'resize', cols: term.cols, rows: term.rows });
+      if (cols !== term.cols || rows !== term.rows) term.resize(cols, rows);
+    } finally {
+      suppressResizeNotify = false;
+    }
+  }
+
+  function syncSizeToServer(): void {
+    if (!canSyncSize()) return;
+    const flags = liveFlags();
+    const pin = shouldStickToLiveScreen(term, flags);
+    try {
+      const prevCols = term.cols;
+      const prevRows = term.rows;
+      fitToHost();
+      const resized = term.cols !== prevCols || term.rows !== prevRows;
+      if (resized) {
+        socket?.send({ type: 'resize', cols: term.cols, rows: term.rows });
+      }
+      if (resized || pin) pinLive();
     } catch { /* hidden */ }
+  }
+
+  function scheduleSyncSizeToServer(): void {
+    if (!canSyncSize()) return;
+    if (syncDebounceTimer !== undefined) clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = setTimeout(() => {
+      syncDebounceTimer = undefined;
+      syncSizeToServer();
+    }, 100);
   }
 
   function scheduleLayoutSettleSync(): void {
@@ -107,9 +141,14 @@
   function markAttachReady(): void {
     attachPhase = 'ready';
     syncSizeToServer();
+    if (attachSettled) return;
+    attachSettled = true;
     scheduleLayoutSettleSync();
     void document.fonts.ready.then(() => {
-      if (canSyncSize()) syncSizeToServer();
+      if (!canSyncSize()) return;
+      syncSizeToServer();
+      stickToLiveScreen = false;
+      pinLive();
     });
   }
 
@@ -119,7 +158,7 @@
       fontSize: TERM_FONT_SIZE,
       lineHeight: TERM_LINE_HEIGHT,
       cursorBlink: true,
-      scrollback: 10000,
+      scrollback: 5000,
       allowProposedApi: true,
       // Bright theme — based on GitHub Light, tuned for legibility.
       theme: {
@@ -160,11 +199,14 @@
     // Do not fit before hello — mount-time fit + onResize would resize the server
     // before the snapshot lands, desyncing PTY cols from the serialized screen.
 
+    writeBatch = createTermWriteBatch((data, cb) => term.write(data, cb));
+
     socket = new SessionSocket(sessionId);
     socket.on('status', (s) => onStatus?.(s));
     socket.on('hello', (msg) => {
       if (msg.truncated) {
         attachPhase = 'restoring';
+        stickToLiveScreen = true;
         term.clear();
         // Snapshot bytes were serialized at msg.cols × msg.rows. Resizing the
         // server (or client fit) before they land desyncs TUI layout → bad wrap
@@ -172,21 +214,31 @@
         applyTermSize(msg.cols, msg.rows);
         pendingScrollBottom = true;
         scheduleRestoreScrollFallback();
-      } else {
+      } else if (attachPhase !== 'ready') {
         markAttachReady();
+      } else {
+        // Soft reconnect: screen state is intact; avoid re-running attach settle.
+        syncSizeToServer();
       }
       onClientCount?.(msg.clientCount);
     });
     socket.on('data', (bytes) => {
-      const stick = !pendingScrollBottom && isViewportAtBottom();
-      term.write(bytes, () => {
+      const flags = liveFlags();
+      const stick = !flags.pendingScrollBottom && shouldStickToLiveScreen(term, flags);
+      const onDone = () => {
         if (pendingScrollBottom) {
           finishRestoreScroll();
           requestAnimationFrame(() => markAttachReady());
         } else if (stick) {
-          scrollToLiveScreen();
+          scrollToLiveScreen(term);
         }
-      });
+      };
+      if (pendingScrollBottom) {
+        writeBatch?.flush();
+        term.write(bytes, onDone);
+        return;
+      }
+      writeBatch?.push(bytes, onDone);
     });
     socket.on('title', (t) => onTitle?.(t));
     socket.on('clients', (c) => onClientCount?.(c));
@@ -204,7 +256,11 @@
 
     resizeObserver = new ResizeObserver(() => {
       if (!canSyncSize()) return;
-      syncSizeToServer();
+      if (resizeRaf !== undefined) cancelAnimationFrame(resizeRaf);
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = undefined;
+        scheduleSyncSizeToServer();
+      });
     });
     resizeObserver.observe(host);
 
@@ -213,7 +269,11 @@
   });
 
   onDestroy(() => {
+    writeBatch?.flush();
+    writeBatch?.dispose();
     if (restoreScrollTimer !== undefined) clearTimeout(restoreScrollTimer);
+    if (syncDebounceTimer !== undefined) clearTimeout(syncDebounceTimer);
+    if (resizeRaf !== undefined) cancelAnimationFrame(resizeRaf);
     resizeObserver?.disconnect();
     socket?.close();
     term?.dispose();

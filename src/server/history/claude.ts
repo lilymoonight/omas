@@ -5,6 +5,7 @@ import os from 'node:os';
 import readline from 'node:readline';
 import type { HistorySession } from './types.js';
 import { cwdExists, resolveEncodedPath } from './encoded-path.js';
+import { estimateJsonlLines } from './line-estimate.js';
 
 async function readHeadLines(file: string, max: number): Promise<unknown[]> {
   const stream = fs.createReadStream(file, { encoding: 'utf8' });
@@ -18,19 +19,6 @@ async function readHeadLines(file: string, max: number): Promise<unknown[]> {
   rl.close();
   stream.destroy();
   return out;
-}
-
-async function countLines(file: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    let count = 0;
-    const s = fs.createReadStream(file);
-    s.on('data', (chunk: any) => {
-      const buf: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      for (let i = 0; i < buf.length; i++) if (buf[i] === 0x0a) count++;
-    });
-    s.on('end', () => resolve(count));
-    s.on('error', reject);
-  });
 }
 
 function pickTitle(entries: any[]): string | null {
@@ -92,11 +80,11 @@ export async function scan(): Promise<HistorySession[]> {
     for (const f of files) {
       const file = path.join(projDir, f);
       try {
-        const [stat, head, lineCount] = await Promise.all([
+        const [stat, head] = await Promise.all([
           fsp.stat(file),
           readHeadLines(file, 200),
-          countLines(file),
         ]);
+        const lineCount = estimateJsonlLines(stat.size);
         const id = path.basename(f, '.jsonl');
         const cwd = await cwdFromProject(proj, head);
         const exists = await cwdExists(cwd);

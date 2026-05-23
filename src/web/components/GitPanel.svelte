@@ -3,7 +3,16 @@
   import { api, type GitStatus, type GitFile } from '../lib/api.js';
   import { gitStatusEqual } from '../lib/stable-update.js';
   import Icon from './Icon.svelte';
-  import FileDiffModal from './FileDiffModal.svelte';
+  import type { Component } from 'svelte';
+
+  let DiffModal = $state<Component<{
+    sessionId: string;
+    path: string;
+    staged: boolean;
+    root: string;
+    onClose: () => void;
+    onSaved?: () => void;
+  }> | null>(null);
 
   interface Props { sessionId: string; }
   const { sessionId }: Props = $props();
@@ -13,7 +22,10 @@
   let inFlight = false;
   let viewing = $state<{ path: string; staged: boolean } | null>(null);
 
-  function open(path: string, staged: boolean): void {
+  async function open(path: string, staged: boolean): Promise<void> {
+    if (!DiffModal) {
+      DiffModal = (await import('./FileDiffModal.svelte')).default;
+    }
     viewing = { path, staged };
   }
 
@@ -187,8 +199,8 @@
   {/if}
 </aside>
 
-{#if viewing && status?.available}
-  <FileDiffModal
+{#if viewing && status?.available && DiffModal}
+  <DiffModal
     {sessionId}
     path={viewing.path}
     staged={viewing.staged}

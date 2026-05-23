@@ -5,6 +5,7 @@ import os from 'node:os';
 import readline from 'node:readline';
 import type { HistorySession } from './types.js';
 import { cwdExists, resolveEncodedPath } from './encoded-path.js';
+import { estimateJsonlLines } from './line-estimate.js';
 
 /** Cursor agent stores transcripts at
  *    ~/.cursor/projects/<encoded>/agent-transcripts/<chatId>/<chatId>.jsonl
@@ -24,19 +25,6 @@ async function readHeadLines(file: string, max: number): Promise<unknown[]> {
   rl.close();
   stream.destroy();
   return out;
-}
-
-async function countLines(file: string): Promise<number> {
-  return new Promise((resolve, reject) => {
-    let count = 0;
-    const s = fs.createReadStream(file);
-    s.on('data', (chunk: any) => {
-      const buf: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      for (let i = 0; i < buf.length; i++) if (buf[i] === 0x0a) count++;
-    });
-    s.on('end', () => resolve(count));
-    s.on('error', reject);
-  });
 }
 
 function pickTitle(entries: any[]): string | null {
@@ -82,11 +70,11 @@ export async function scan(): Promise<HistorySession[]> {
       const chatDir = path.join(transcriptsDir, chatId);
       const transcript = path.join(chatDir, `${chatId}.jsonl`);
       try {
-        const [stat, head, lineCount] = await Promise.all([
+        const [stat, head] = await Promise.all([
           fsp.stat(transcript),
           readHeadLines(transcript, 80),
-          countLines(transcript),
         ]);
+        const lineCount = estimateJsonlLines(stat.size);
         const cwd = await resolveEncodedPath(proj);
         const exists = await cwdExists(cwd);
         const title = pickTitle(head) ?? '(无标题)';

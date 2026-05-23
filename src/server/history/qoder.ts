@@ -1,20 +1,16 @@
-import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import type { HistorySession } from './types.js';
+import { estimateJsonlLines } from './line-estimate.js';
 
 async function countLines(file: string): Promise<number> {
-  return new Promise((resolve) => {
-    let count = 0;
-    const s = fs.createReadStream(file);
-    s.on('data', (chunk: any) => {
-      const buf: Buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      for (let i = 0; i < buf.length; i++) if (buf[i] === 0x0a) count++;
-    });
-    s.on('end', () => resolve(count));
-    s.on('error', () => resolve(0));
-  });
+  try {
+    const stat = await fsp.stat(file);
+    return estimateJsonlLines(stat.size);
+  } catch {
+    return 0;
+  }
 }
 
 type QoderSessionMeta = {
