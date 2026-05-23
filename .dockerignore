@@ -1,0 +1,10 @@
+node_modules
+dist
+.npm-cache
+.node-gyp-cache
+.dev-config
+.home
+.git
+coverage
+*.log
+.vite

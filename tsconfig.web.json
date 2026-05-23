@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": ["svelte"],
+    "noEmit": true
+  },
+  "include": ["src/web/**/*.ts", "src/web/**/*.svelte", "src/shared/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

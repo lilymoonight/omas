@@ -1,0 +1,31 @@
+# Drop into /etc/systemd/system/ (system) or ~/.config/systemd/user/ (user).
+# After install:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now omas
+# or:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now omas
+#
+# Before first boot, set the password interactively:
+#   omas init
+
+[Unit]
+Description=omas — self-hosted web terminal
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/omas serve --host 127.0.0.1 --port 7681
+Restart=on-failure
+RestartSec=2
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=%h/.config/oh-my-agent-shell
+
+[Install]
+WantedBy=default.target

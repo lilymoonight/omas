@@ -1,0 +1,40 @@
+---
+name: Bug 报告
+description: 功能异常或崩溃
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先查看 [CHANGELOG](https://github.com/lilymoonight/omas/blob/master/CHANGELOG.md) 与 [故障排查](https://github.com/lilymoonight/omas/blob/master/docs/MANUAL.md#故障排查)。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么？
+      description: 实际行为与期望行为的对比
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. omas 版本 / 安装方式（Release 二进制 or 源码构建）
+        2. 操作系统与架构
+        3. 操作步骤
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 相关区域
+      options:
+        - 终端 / PTY
+        - AI 历史页（Claude / Cursor 等）
+        - 文件树 / 网页编辑
+        - Git 面板
+        - 认证 / 部署 / 反向代理
+        - 其他
+    validations:
+      required: true

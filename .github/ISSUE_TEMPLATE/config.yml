@@ -1,0 +1,8 @@
+blank_issues: false
+contact_links:
+  - name: 安全漏洞（私下报告）
+    url: https://github.com/lilymoonight/omas/security/advisories/new
+    about: 请勿在公开 Issue 中报告安全问题
+  - name: AI 工作流文档
+    url: https://github.com/lilymoonight/omas/blob/master/docs/AI-WORKFLOW.md
+    about: 了解 Claude/Cursor 历史恢复、侧栏编辑等用法

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.npm-cache/
+.node-gyp-cache/
+.dev-config/
+.home/
+.claude/
+*.log
+.DS_Store
+.vite/
+coverage/
+release/
+.dl/
+.bun/
+.tmp/
+src/server/web-assets.gen.ts

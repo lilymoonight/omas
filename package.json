@@ -1,0 +1,87 @@
+{
+  "name": "oh-my-agent-shell",
+  "version": "1.0.0",
+  "description": "Lightweight self-hosted terminal for the agent era — separate sessions, disposable tabs, background PTY, auto-scan AI history, focused on terminal with just-enough file edit & diff review.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lilymoonight/omas.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lilymoonight/omas/issues"
+  },
+  "homepage": "https://github.com/lilymoonight/omas#readme",
+  "keywords": [
+    "web-terminal",
+    "pty",
+    "self-hosted",
+    "claude-code",
+    "cursor",
+    "ai-development",
+    "devtools",
+    "xterm"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "build:web": "vite build",
+    "build:embed": "node scripts/embed-web-assets.mjs",
+    "dev:server": "tsx watch src/server/index.ts serve --config-dir ./.dev-config",
+    "dev:web": "vite",
+    "prepare": "npm run build:embed",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && svelte-check --tsconfig tsconfig.web.json"
+  },
+  "dependencies": {
+    "@codemirror/lang-css": "^6.3.1",
+    "@codemirror/lang-go": "^6.0.1",
+    "@codemirror/lang-html": "^6.4.11",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/lang-rust": "^6.0.2",
+    "@codemirror/lang-sql": "^6.10.0",
+    "@codemirror/lang-xml": "^6.1.0",
+    "@codemirror/lang-yaml": "^6.1.3",
+    "@codemirror/legacy-modes": "^6.5.3",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/static": "^8.0.4",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.0",
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "argon2": "^0.43.0",
+    "codemirror": "^6.0.2",
+    "commander": "^12.1.0",
+    "cookie": "^1.0.2",
+    "fastify": "^5.2.1",
+    "nanoid": "^5.0.9",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0",
+    "prompts": "^2.4.2",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tsconfig/node22": "^22.0.0",
+    "@types/node": "^22.10.5",
+    "@types/prompts": "^2.4.9",
+    "@types/ws": "^8.5.13",
+    "@xterm/addon-clipboard": "^0.1.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "svelte": "^5.16.0",
+    "svelte-check": "^4.1.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}
