@@ -155,14 +155,15 @@ export class PtySession extends EventEmitter {
     this.emit('resize', cols, rows);
   }
 
-  /** Serialize the current screen + last N lines of scrollback as a single
-   *  blob of ANSI escape sequences. Replaying this into a fresh xterm.js
-   *  produces a pixel-identical view of the live state — including TUI
-   *  apps' alternate-screen contents. */
+  /** Serialize the live screen for attach/reconnect. Scrollback is omitted on
+   *  purpose: replaying thousands of scrollback lines leaves the browser
+   *  viewport stuck at the top (Cursor/Claude TUI "jumps to ancient history").
+   *  The headless mirror still accumulates scrollback for debugging; only
+   *  the active buffer is shipped to clients. */
   serializeSnapshot(): { bytes: Buffer; cols: number; rows: number } {
     let s = '';
     try {
-      s = this.serializer.serialize({ scrollback: HEADLESS_SCROLLBACK });
+      s = this.serializer.serialize({ scrollback: 0 });
     } catch {
       // Headless terminal/serializer can throw on edge cases; fall back to empty.
     }

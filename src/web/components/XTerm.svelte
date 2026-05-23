@@ -22,8 +22,39 @@
   let fit: FitAddon;
   let socket: SessionSocket;
   let resizeObserver: ResizeObserver;
-  /** After a full snapshot restore, xterm viewport stays at scrollback top unless we scroll down. */
+  /** After a full snapshot restore, scroll to the live screen once writes land. */
   let pendingScrollBottom = false;
+  let restoreScrollTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function isViewportAtBottom(): boolean {
+    try {
+      const buf = term.buffer.active;
+      return buf.viewportY >= buf.baseY;
+    } catch {
+      return true;
+    }
+  }
+
+  function scrollToLiveScreen(): void {
+    try { term.scrollToBottom(); } catch { /* */ }
+  }
+
+  function finishRestoreScroll(): void {
+    pendingScrollBottom = false;
+    if (restoreScrollTimer !== undefined) {
+      clearTimeout(restoreScrollTimer);
+      restoreScrollTimer = undefined;
+    }
+    scrollToLiveScreen();
+  }
+
+  function scheduleRestoreScrollFallback(): void {
+    if (restoreScrollTimer !== undefined) clearTimeout(restoreScrollTimer);
+    // Fallback if xterm write() callback fires before a large snapshot finishes parsing.
+    restoreScrollTimer = setTimeout(() => {
+      if (pendingScrollBottom) finishRestoreScroll();
+    }, 150);
+  }
 
   function currentSize(): { cols: number; rows: number } {
     try {
@@ -99,26 +130,22 @@
     socket = new SessionSocket(sessionId);
     socket.on('status', (s) => onStatus?.(s));
     socket.on('hello', (msg) => {
-      // Server-truncated → start from a clean screen.
       if (msg.truncated) {
         term.clear();
         pendingScrollBottom = true;
-        // Empty snapshot: still ensure viewport at live screen, not scrollback top.
-        requestAnimationFrame(() => {
-          if (pendingScrollBottom) {
-            pendingScrollBottom = false;
-            try { term.scrollToBottom(); } catch { /* */ }
-          }
-        });
+        scheduleRestoreScrollFallback();
       }
       syncSizeToServer();
       onClientCount?.(msg.clientCount);
     });
     socket.on('data', (bytes) => {
+      const stick = isViewportAtBottom();
       term.write(bytes, () => {
-        if (!pendingScrollBottom) return;
-        pendingScrollBottom = false;
-        try { term.scrollToBottom(); } catch { /* */ }
+        if (pendingScrollBottom) {
+          finishRestoreScroll();
+        } else if (stick) {
+          scrollToLiveScreen();
+        }
       });
     });
     socket.on('title', (t) => onTitle?.(t));
@@ -144,6 +171,7 @@
   });
 
   onDestroy(() => {
+    if (restoreScrollTimer !== undefined) clearTimeout(restoreScrollTimer);
     resizeObserver?.disconnect();
     socket?.close();
     term?.dispose();
