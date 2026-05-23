@@ -10,6 +10,10 @@
 
 - **TUI 视口乱跳**：attach 快照不再回放 2000 行 scrollback（只传当前屏）；修复 restore 时在数据到达前过早 `scrollToBottom` 的 race；跟随输出时保持滚到底。
 
+### 文档
+
+- **对比说明**：README / `docs/AI-WORKFLOW.md` 补充与 **CLI + tmux**（滚动 vs 复制）、IDE 的分工对比。
+
 ## [1.0.0] - 2026-05-23
 
 首个 **Git 公开初版**（仓库历史自本 tag 起为单 commit 快照；功能由下方 [0.2.x 开发史](#开发史v100-之前--原-02x) 迭代而来）。

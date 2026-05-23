@@ -119,6 +119,37 @@ Agent 改完一堆文件后，常见需求是 **「先看一眼再 merge」**：
 
 ---
 
+## 与 CLI + tmux 比
+
+tmux 是远程 Shell 会话管理的经典方案，但和 **omas 要解决的 Agent 工作流** 重叠有限，尤其在 **滚动 vs 复制** 上：
+
+### tmux 的摩擦
+
+| 你想做的事 | tmux 里常见体验 |
+|------------|-----------------|
+| 滚轮往上翻看 Agent 刚刷过的日志 | 需 `set -g mouse on`；滚的是 tmux **history buffer**，手感与 GUI 终端不同 |
+| 复制三行报错贴到 Issue | 进 **copy-mode**（默认 `Ctrl+b [`），用键盘选区，`Enter` 复制；退出后才能粘贴 |
+| mouse on 时复制 | 鼠标选区与 tmux/应用 **抢事件**；TUI（Claude Code、less、vim）里更易误触 |
+| mouse off 时滚动 | 同样依赖 copy-mode 才能翻历史，**不能**一边像普通终端那样滚、一边随时拖选复制 |
+
+本质是：**tmux 的「滚动」和「复制」共用 copy-mode 这一套机制**，和 modern TUI Agent 的鼠标需求冲突，很难两者都「开箱即用」。
+
+### omas 的做法
+
+- **滚动**：xterm.js scrollback + 浏览器滚轮，无需 copy-mode。
+- **复制**：选区 + 系统剪贴板（`ClipboardAddon`），与网页、IDE 一致。
+- **会话**：服务端 PTY 保活（类似 detach），外加会话列表与 AI 历史恢复——tmux 没有的 **Agent 上下文** 层。
+
+### 怎么选
+
+| 场景 | 更合适 |
+|------|--------|
+| 纯 SSH、pane 编排、服务器上极简 | tmux |
+| 本机/内网挂 Agent，经常翻 log、复制输出、review diff | omas |
+| 两者都要 | 服务器里 tmux 跑长期任务；开发机用 omas 管 Agent（不必嵌套 tmux） |
+
+---
+
 ## 与 Cursor / VS Code / Claude Desktop 的分工
 
 | 场景 | 用 IDE / Desktop | 用 omas |
@@ -131,6 +162,7 @@ Agent 改完一堆文件后，常见需求是 **「先看一眼再 merge」**：
 | Review Agent 改动的 3～5 个文件 | SCM 面板（功能全） | ✅ Git 侧栏（够快） |
 | 改一行配置 | 开 IDE | ✅ 侧栏点开即改 |
 | iPad / 另一台电脑看终端 | 视方案 | ✅ 浏览器 + 端口转发 |
+| 滚轮回看历史 + 拖选复制 | ⚠️ copy-mode 与 mouse 模式难兼顾 | ✅ 浏览器原生 scrollback + 剪贴板 |
 
 **推荐组合**：IDE 写代码 + Chat；omas 挂着 Agent 与 Shell；需要 deep dive 时再回 IDE。**不必把所有上下文塞进一个编辑器窗口。**
 
