@@ -20,6 +20,7 @@ import { LoginLimiter } from './auth/limiter.js';
 import { registerAuthRoutes, makeAuthGuard, isAuthedFromRawHeaders } from './auth/routes.js';
 import { autoInitConfig } from './auth/auto-init.js';
 import { resolveDefaultCwd } from './pty/default-cwd.js';
+import { UploadStore } from './pty/upload-store.js';
 
 export type ServerConfig = {
   host: string;
@@ -81,11 +82,13 @@ export async function createServer(config: ServerConfig) {
     defaultCwd,
   }));
 
+  const uploads = new UploadStore();
+
   registerSessionRoutes(app, hub);
   registerSystemRoutes(app);
   registerGitRoutes(app, hub);
   registerGitFileRoutes(app, hub);
-  registerFsRoutes(app, hub);
+  registerFsRoutes(app, hub, uploads);
   registerHistoryRoutes(app);
   installWsUpgrade(app.server, hub, (req) =>
     !isAuthRequired(cfg) || isAuthedFromRawHeaders(req, store),
@@ -138,6 +141,7 @@ export async function createServer(config: ServerConfig) {
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'shutting down');
     store.shutdown();
+    await uploads.shutdown();
     await hub.shutdownAll();
     try {
       await app.close();

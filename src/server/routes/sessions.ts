@@ -40,6 +40,7 @@ export function registerSessionRoutes(app: App, hub: SessionHub): void {
         ...s.toJSON(),
         foreground: info?.foreground ?? null,
         agent: info?.agent ?? null,
+        agentState: info?.agentState ?? null,
         liveCwd: cwds[i] ?? null,
       };
     });
@@ -67,6 +68,7 @@ export function registerSessionRoutes(app: App, hub: SessionHub): void {
       ...s.toJSON(),
       foreground: info?.foreground ?? null,
       agent: info?.agent ?? null,
+      agentState: info?.agentState ?? null,
       liveCwd: liveCwd ?? null,
     };
   });

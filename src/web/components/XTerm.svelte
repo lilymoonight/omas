@@ -15,7 +15,59 @@
     shouldStickToLiveScreen,
   } from '../lib/term-viewport.js';
   import { createTermWriteBatch, type TermWriteBatch } from '../lib/term-write-batch.js';
+  import { resolvedTheme, type ResolvedTheme } from '../lib/theme.js';
   import '@xterm/xterm/css/xterm.css';
+
+  // xterm palettes per UI theme. Light is GitHub Light; dark is GitHub Dark.
+  const LIGHT_TERM_THEME = {
+    background: '#ffffff',
+    foreground: '#1f2328',
+    cursor: '#2f6feb',
+    cursorAccent: '#ffffff',
+    selectionBackground: '#cce2ff',
+    selectionForeground: '#1f2328',
+    black: '#24292f',
+    red: '#cf222e',
+    green: '#116329',
+    yellow: '#9a6700',
+    blue: '#0969da',
+    magenta: '#8250df',
+    cyan: '#1b7c83',
+    white: '#6e7781',
+    brightBlack: '#57606a',
+    brightRed: '#a40e26',
+    brightGreen: '#1a7f37',
+    brightYellow: '#7d4e00',
+    brightBlue: '#218bff',
+    brightMagenta: '#a475f9',
+    brightCyan: '#3192aa',
+    brightWhite: '#1f2328',
+  };
+  const DARK_TERM_THEME = {
+    background: '#0e1116',
+    foreground: '#e6edf3',
+    cursor: '#58a6ff',
+    cursorAccent: '#0e1116',
+    selectionBackground: '#2d4a73',
+    selectionForeground: '#e6edf3',
+    black: '#484f58',
+    red: '#ff7b72',
+    green: '#3fb950',
+    yellow: '#d29922',
+    blue: '#58a6ff',
+    magenta: '#bc8cff',
+    cyan: '#39c5cf',
+    white: '#b1bac4',
+    brightBlack: '#6e7681',
+    brightRed: '#ffa198',
+    brightGreen: '#56d364',
+    brightYellow: '#e3b341',
+    brightBlue: '#79c0ff',
+    brightMagenta: '#d2a8ff',
+    brightCyan: '#56d4dd',
+    brightWhite: '#f0f6fc',
+  };
+  const termTheme = (t: ResolvedTheme) => (t === 'dark' ? DARK_TERM_THEME : LIGHT_TERM_THEME);
 
   interface Props {
     sessionId: string;
@@ -28,6 +80,7 @@
 
   let host: HTMLDivElement;
   let term: Terminal;
+  let unsubTheme: (() => void) | undefined;
   let fit: FitAddon;
   let socket: SessionSocket;
   let writeBatch: TermWriteBatch | undefined;
@@ -176,6 +229,15 @@
   }
 
   onMount(() => {
+    // Track current theme; the subscription fires synchronously here, so
+    // `current` is set before the Terminal is constructed, and later toggles
+    // update the live terminal palette.
+    let current: ResolvedTheme = 'light';
+    unsubTheme = resolvedTheme.subscribe((t) => {
+      current = t;
+      if (term) term.options.theme = termTheme(t);
+    });
+
     term = new Terminal({
       fontFamily: '"JetBrains Mono","Fira Code","SF Mono",Menlo,Monaco,Consolas,"PingFang SC","Hiragino Sans GB","Noto Sans CJK SC",monospace',
       fontSize: TERM_FONT_SIZE,
@@ -183,31 +245,7 @@
       cursorBlink: true,
       scrollback: 5000,
       allowProposedApi: true,
-      // Bright theme — based on GitHub Light, tuned for legibility.
-      theme: {
-        background:    '#ffffff',
-        foreground:    '#1f2328',
-        cursor:        '#2f6feb',
-        cursorAccent:  '#ffffff',
-        selectionBackground: '#cce2ff',
-        selectionForeground: '#1f2328',
-        black:         '#24292f',
-        red:           '#cf222e',
-        green:         '#116329',
-        yellow:        '#9a6700',
-        blue:          '#0969da',
-        magenta:       '#8250df',
-        cyan:          '#1b7c83',
-        white:         '#6e7781',
-        brightBlack:   '#57606a',
-        brightRed:     '#a40e26',
-        brightGreen:   '#1a7f37',
-        brightYellow:  '#7d4e00',
-        brightBlue:    '#218bff',
-        brightMagenta: '#a475f9',
-        brightCyan:    '#3192aa',
-        brightWhite:   '#1f2328',
-      },
+      theme: termTheme(current),
     });
     fit = new FitAddon();
     term.loadAddon(fit);
@@ -308,6 +346,7 @@
   });
 
   onDestroy(() => {
+    unsubTheme?.();
     writeBatch?.flush();
     writeBatch?.dispose();
     if (restoreScrollTimer !== undefined) clearTimeout(restoreScrollTimer);

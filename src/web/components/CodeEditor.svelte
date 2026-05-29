@@ -28,22 +28,28 @@
   const editableComp = new Compartment();
   const languageComp = new Compartment();
 
+  // Surface colors are driven by CSS variables so the editor follows the
+  // global light/dark theme without rebuilding the EditorView.
   const editorTheme = EditorView.theme({
-    '&': { height: '100%' },
+    '&': { height: '100%', backgroundColor: 'var(--bg-elev)', color: 'var(--fg)' },
     '&.cm-focused': { outline: 'none' },
     '.cm-scroller': {
       fontFamily: 'ui-monospace, "JetBrains Mono", Menlo, monospace',
       fontSize: '12.5px',
       lineHeight: '1.45',
     },
-    '.cm-content': { padding: '8px 0' },
-    '.cm-gutters': {
-      backgroundColor: '#f6f8fa',
-      borderRight: '1px solid #e8e8e8',
-      color: '#8b949e',
+    '.cm-content': { padding: '8px 0', caretColor: 'var(--fg)' },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--fg)' },
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+      backgroundColor: 'var(--accent-soft)',
     },
-    '.cm-activeLineGutter': { backgroundColor: '#eef1f4' },
-    '.cm-activeLine': { backgroundColor: '#f6f8fa' },
+    '.cm-gutters': {
+      backgroundColor: 'var(--bg-soft)',
+      borderRight: '1px solid var(--border)',
+      color: 'var(--fg-dim)',
+    },
+    '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
+    '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
   });
 
   function buildExtensions(lang: Extension[]): Extension[] {

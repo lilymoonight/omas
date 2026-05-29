@@ -20,6 +20,13 @@ export type Session = {
   /** Normalized known AI-agent key when recognized: `claude` | `cursor` | `qoder`. */
   agent?: AgentKey | null;
   /**
+   * Activity of the recognized agent, derived from recent PTY output: `active`
+   * while it's producing output (working / streaming / spinner), `idle` when
+   * quiescent (typically waiting for user input). Only set when `agent` is
+   * present; null otherwise.
+   */
+  agentState?: AgentState | null;
+  /**
    * Live working directory of the shell (tracks `cd`), absolute path. Differs
    * from `cwd` (the launch dir) once the user navigates — this is what tells
    * apart multiple agents started from the same default directory.
@@ -28,6 +35,7 @@ export type Session = {
 };
 
 export type AgentKey = 'claude' | 'cursor' | 'qoder';
+export type AgentState = 'active' | 'idle';
 
 export type CreateSessionInput = {
   title?: string;

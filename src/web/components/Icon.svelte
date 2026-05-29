@@ -9,7 +9,8 @@
       | 'cpu' | 'hard-drive' | 'memory' | 'activity' | 'clock'
       | 'git-branch' | 'file' | 'folder' | 'arrow-up' | 'arrow-down'
       | 'chevron-right' | 'chevron-down'
-      | 'zap' | 'shield' | 'sparkles';
+      | 'zap' | 'shield' | 'sparkles' | 'upload'
+      | 'sun' | 'moon';
     size?: number;
     strokeWidth?: number;
   }
@@ -47,6 +48,9 @@
     'zap':        '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
     'shield':     '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
     'sparkles':   '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9Z"/><path d="M19 15l.9 2.4L22 18l-2.1.6L19 21l-.9-2.4L16 18l2.1-.6Z"/>',
+    'upload':     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+    'sun':        '<circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="6.34" y2="6.34"/><line x1="17.66" y1="17.66" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="6.34" y2="17.66"/><line x1="17.66" y1="6.34" x2="19.07" y2="4.93"/>',
+    'moon':       '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
   };
 </script>
 

@@ -5,6 +5,12 @@ import { shellCwd } from './shell-cwd.js';
 
 export const MAX_EDIT_BYTES = 2 * 1024 * 1024;
 export const MAX_LIST_ENTRIES = 500;
+/** Total size cap for a single uploaded file (chunked transfer supports huge files). */
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024 * 1024;
+/** Max bytes accepted in one upload request (single-shot body or one chunk). */
+export const MAX_REQUEST_BYTES = 16 * 1024 * 1024;
+/** Chunk size the client splits large files into. */
+export const UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 
 export function looksBinary(buf: Buffer): boolean {
   const probe = buf.subarray(0, 8192);
@@ -45,6 +51,38 @@ export async function writeFileAtomic(file: string, content: string): Promise<vo
   const tmp = `${file}.omas.tmp.${process.pid}`;
   await fsp.writeFile(tmp, content, 'utf8');
   await fsp.rename(tmp, file);
+}
+
+export async function writeBufferAtomic(file: string, buf: Buffer): Promise<void> {
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  const tmp = `${file}.omas.tmp.${process.pid}.${Date.now()}`;
+  await fsp.writeFile(tmp, buf);
+  await fsp.rename(tmp, file);
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fsp.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve a collision-free absolute path inside `dirAbs` for `name`. When the
+ * desired name is taken, append " (1)", " (2)", … before the extension.
+ */
+export async function uniqueName(dirAbs: string, name: string): Promise<string> {
+  const ext = path.extname(name);
+  const stem = ext ? name.slice(0, -ext.length) : name;
+  let candidate = path.join(dirAbs, name);
+  let n = 1;
+  while (await pathExists(candidate)) {
+    candidate = path.join(dirAbs, `${stem} (${n})${ext}`);
+    n++;
+  }
+  return candidate;
 }
 
 export function relFromAbs(cwd: string, abs: string): string {

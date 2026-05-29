@@ -286,7 +286,7 @@
     font-size: 11px; font-weight: 500;
     flex-shrink: 0;
   }
-  .badge-dirty { background: #fff8e1; color: #946800; }
+  .badge-dirty { background: var(--warning-soft); color: var(--warning); }
   .actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
   .tabs {
     display: inline-flex;
@@ -322,7 +322,7 @@
   .body {
     flex: 1; min-height: 0;
     overflow: auto;
-    background: #ffffff;
+    background: var(--bg-elev);
     display: flex;
     flex-direction: column;
   }
@@ -332,7 +332,7 @@
     flex-shrink: 0;
   }
   .state.error { color: var(--danger); }
-  .state.warn { color: #946800; }
+  .state.warn { color: var(--warning); }
   .state.ok { color: var(--success); }
 
   table {
@@ -358,10 +358,10 @@
     word-break: break-word;
     color: var(--fg);
   }
-  tr.l-add td.content { background: #e6f4ea; color: var(--success); }
-  tr.l-add td.ln { background: #d8edde; }
+  tr.l-add td.content { background: var(--success-soft); color: var(--success); }
+  tr.l-add td.ln { background: color-mix(in srgb, var(--success) 22%, var(--bg-elev)); }
   tr.l-del td.content { background: var(--danger-soft); color: var(--danger); }
-  tr.l-del td.ln { background: #fbe1e4; }
+  tr.l-del td.ln { background: color-mix(in srgb, var(--danger) 22%, var(--bg-elev)); }
   tr.l-hunk td { background: var(--bg-hover); color: var(--accent); }
   tr.l-meta td { background: var(--bg-soft); color: var(--fg-muted); font-weight: 500; }
 </style>

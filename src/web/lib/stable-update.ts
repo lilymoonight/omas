@@ -58,6 +58,7 @@ export function sessionsEqual(a: Session[], b: Session[]): boolean {
       || x.exitSignal !== y.exitSignal
       || x.foreground !== y.foreground
       || x.agent !== y.agent
+      || x.agentState !== y.agentState
       || x.liveCwd !== y.liveCwd
     ) return false;
   }

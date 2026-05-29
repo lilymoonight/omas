@@ -21,15 +21,25 @@
   --accent-soft:   #e7efff;
   --accent-strong: #1f5be0;
   --success:       #1a7f37;
+  --success-soft:  #e6f4ea;
   --warning:       #b08800;
+  --warning-soft:  #fff8e1;
   --danger:        #cf222e;
   --danger-soft:   #ffeef0;
+
+  /* Terminal surface (xterm host fallback bg). */
+  --term-bg: #ffffff;
+
+  /* Scrollbar */
+  --scrollbar-thumb:       #d4d8de;
+  --scrollbar-thumb-hover: #b9bfc7;
 
   /* Shapes */
   --radius:    10px;
   --radius-sm: 6px;
   --shadow-sm: 0 1px 2px rgba(31, 35, 40, 0.06);
   --shadow:    0 4px 14px rgba(31, 35, 40, 0.08);
+  --shadow-md: 0 6px 20px rgba(31, 35, 40, 0.12);
 
   font-family:
     "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -37,6 +47,43 @@
     "Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif;
   font-size: 14px;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Dark theme — applied when <html data-theme="dark">. The theme module resolves
+   the user's preference (light / dark / follow-system) to this attribute. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg:        #16191f;
+  --bg-soft:   #0f1116;
+  --bg-elev:   #1b1f27;
+  --bg-hover:  #242a33;
+
+  --fg:        #e6edf3;
+  --fg-muted:  #9aa4b2;
+  --fg-dim:    #6e7681;
+
+  --border:        #2a313c;
+  --border-strong: #3a424e;
+
+  --accent:        #4c8dff;
+  --accent-soft:   #182a44;
+  --accent-strong: #6aa1ff;
+  --success:       #3fb950;
+  --success-soft:  #132a1c;
+  --warning:       #d29922;
+  --warning-soft:  #2a2410;
+  --danger:        #f85149;
+  --danger-soft:   #2c1719;
+
+  --term-bg: #0e1116;
+
+  --scrollbar-thumb:       #353c46;
+  --scrollbar-thumb-hover: #454d59;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow:    0 4px 14px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.55);
 }
 
 *,
@@ -129,5 +176,5 @@ input:focus {
 
 /* Scrollbar (webkit) */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #d4d8de; border-radius: 5px; border: 2px solid var(--bg-soft); }
-::-webkit-scrollbar-thumb:hover { background: #b9bfc7; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 5px; border: 2px solid var(--bg-soft); }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }

@@ -363,7 +363,7 @@
   .tab.active { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
   .tab .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
   .tab .badge {
-    background: rgba(0,0,0,0.06);
+    background: color-mix(in srgb, var(--fg) 10%, transparent);
     border-radius: 999px; padding: 0 7px;
     font-size: 11px; font-weight: 600;
     color: inherit;
@@ -372,7 +372,7 @@
   .error {
     display: inline-flex; align-items: center; gap: 6px;
     color: var(--danger); background: var(--danger-soft);
-    border: 1px solid #f6c4ca; border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent); border-radius: var(--radius-sm);
     padding: 8px 12px; margin: 0 0 16px; font-size: 13px;
   }
   .loading { color: var(--fg-muted); font-size: 13px; }
@@ -456,7 +456,7 @@
     border-radius: 999px; padding: 2px 9px;
     font-size: 11.5px; line-height: 1.5;
   }
-  .chip-warn { background: #fff8e1; color: #946800; }
+  .chip-warn { background: var(--warning-soft); color: var(--warning); }
   .chip-mono {
     background: var(--bg-hover); color: var(--fg-muted);
     border-radius: 4px; padding: 1px 6px;
@@ -469,13 +469,13 @@
     flex-shrink: 0;
   }
   button.safe {
-    background: #e6f4ea;
-    border-color: #b6dbc5;
+    background: var(--success-soft);
+    border-color: color-mix(in srgb, var(--success) 35%, transparent);
     color: var(--success);
     font-weight: 500;
   }
   button.safe:hover:not(:disabled) {
-    background: #d8edde;
+    background: color-mix(in srgb, var(--success) 22%, var(--bg-elev));
     border-color: var(--success);
   }
 </style>

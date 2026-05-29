@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { sessions, startSessionPolling, stopSessionPolling, refreshSessions, checkAuth } from '../lib/stores.js';
   import { api, apiBase } from '../lib/api.js';
+  import { themePref, cycleTheme, THEME_LABEL } from '../lib/theme.js';
   import { refreshHistoryAfterSessionClose } from '../lib/history-cache.js';
   import { navigate } from '../lib/router.js';
   import { estimateTermSize } from '../lib/term-size.js';
@@ -111,6 +112,20 @@
         <div class="subtitle">共 {$sessions.length} 个</div>
       </div>
     </div>
+    <button
+      class="ghost icon-only"
+      title={`主题：${THEME_LABEL[$themePref]}（点击切换）`}
+      aria-label="切换主题"
+      onclick={cycleTheme}
+    >
+      {#if $themePref === 'light'}
+        <Icon name="sun" size={16} />
+      {:else if $themePref === 'dark'}
+        <Icon name="moon" size={16} />
+      {:else}
+        <Icon name="monitor" size={16} />
+      {/if}
+    </button>
     <button class="ghost" title="从 Claude 等工具历史中恢复" onclick={() => navigate({ name: 'history' })}>
       <Icon name="clock" size={16} />
       <span>历史</span>
@@ -165,9 +180,18 @@
                 <span class="card-title">{s.title}</span>
               {/if}
               {#if s.agent}
-                <span class="agent-badge agent-{s.agent}" title={`当前运行：${AGENT_LABEL[s.agent] ?? s.agent}`}>
+                <span
+                  class="agent-badge agent-{s.agent}"
+                  title={`当前运行：${AGENT_LABEL[s.agent] ?? s.agent}${s.agentState ? `（${s.agentState === 'active' ? '工作中' : '空闲'}）` : ''}`}
+                >
+                  {#if s.agentState}
+                    <span class="state-dot" class:active={s.agentState === 'active'}></span>
+                  {/if}
                   <Icon name="sparkles" size={12} />
                   {AGENT_LABEL[s.agent] ?? s.agent}
+                  {#if s.agentState}
+                    <span class="state-text">· {s.agentState === 'active' ? '工作中' : '空闲'}</span>
+                  {/if}
                 </span>
               {:else if s.foreground}
                 <span class="fg-badge" title={`前台进程：${s.foreground}`}>{s.foreground}</span>
@@ -241,7 +265,7 @@
     display: inline-flex; align-items: center; gap: 6px;
     color: var(--danger);
     background: var(--danger-soft);
-    border: 1px solid #f6c4ca;
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
     border-radius: var(--radius-sm);
     padding: 8px 12px;
     margin: 0 0 16px;
@@ -304,9 +328,27 @@
     line-height: 1.5;
     white-space: nowrap;
   }
-  .agent-claude { background: #fbeee0; color: #b4530a; }
-  .agent-cursor { background: #e7eaf3; color: #3a3f57; }
-  .agent-qoder  { background: #e6f0ff; color: #1d5fd6; }
+  .agent-claude { background: color-mix(in srgb, #cc7a33 16%, var(--bg-elev)); color: #cc7a33; }
+  .agent-cursor { background: color-mix(in srgb, #8089a8 16%, var(--bg-elev)); color: #8089a8; }
+  .agent-qoder  { background: color-mix(in srgb, var(--accent) 16%, var(--bg-elev)); color: var(--accent); }
+
+  .state-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--fg-muted);
+    flex-shrink: 0;
+    opacity: 0.65;
+  }
+  .state-dot.active {
+    background: var(--success);
+    opacity: 1;
+    animation: state-pulse 1.3s ease-in-out infinite;
+  }
+  @keyframes state-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.35; transform: scale(0.8); }
+  }
+  .state-text { font-weight: 500; opacity: 0.8; }
   .fg-badge {
     display: inline-flex; align-items: center;
     background: var(--bg-hover);

@@ -160,7 +160,7 @@
     direction: ltr;
   }
   .badge-dirty {
-    background: #fff8e1; color: #946800;
+    background: var(--warning-soft); color: var(--warning);
     border-radius: 999px; padding: 1px 8px;
     font-size: 11px; font-weight: 500;
     flex-shrink: 0;
@@ -169,7 +169,7 @@
   .body {
     flex: 1; min-height: 0;
     overflow: auto;
-    background: #ffffff;
+    background: var(--bg-elev);
     display: flex;
     flex-direction: column;
   }
@@ -179,6 +179,6 @@
     flex-shrink: 0;
   }
   .state.error { color: var(--danger); }
-  .state.warn { color: #946800; }
+  .state.warn { color: var(--warning); }
   .state.ok { color: var(--success); }
 </style>

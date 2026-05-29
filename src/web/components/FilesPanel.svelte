@@ -107,6 +107,10 @@
     expanded = next;
   }
 
+  export function refresh(): void {
+    void refreshAll(false);
+  }
+
   async function openFile(filePath: string) {
     if (!EditorModal) {
       EditorModal = (await import('./FileEditorModal.svelte')).default;

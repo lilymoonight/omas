@@ -82,7 +82,7 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: linear-gradient(180deg, #f7f8fa 0%, #eef1f6 100%);
+    background: linear-gradient(180deg, var(--bg-soft) 0%, var(--bg-hover) 100%);
   }
   form {
     background: var(--bg-elev);
@@ -115,7 +115,7 @@
     display: inline-flex; align-items: center; gap: 6px;
     color: var(--danger);
     background: var(--danger-soft);
-    border: 1px solid #f6c4ca;
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
     border-radius: var(--radius-sm);
     padding: 8px 10px;
     margin: 0;

@@ -4,6 +4,7 @@
   import FilesPanel from '../components/FilesPanel.svelte';
   import GitPanel from '../components/GitPanel.svelte';
   import { api } from '../lib/api.js';
+  import { themePref, cycleTheme, THEME_LABEL } from '../lib/theme.js';
   import { refreshHistoryAfterSessionClose } from '../lib/history-cache.js';
   import { navigate } from '../lib/router.js';
   import { NARROW_BREAKPOINT } from '../lib/term-layout.js';
@@ -22,6 +23,91 @@
   let isNarrow = $state(false);
   let drawerLeft = $state(false);
   let drawerRight = $state(false);
+
+  let filesPanel = $state<{ refresh: () => void } | null>(null);
+
+  type UploadItem = {
+    id: number;
+    name: string;
+    loaded: number;
+    total: number;
+    status: 'uploading' | 'done' | 'error';
+    error?: string;
+  };
+  let uploads = $state<UploadItem[]>([]);
+  let dragDepth = $state(0);
+  let uploadSeq = 0;
+  const dragging = $derived(dragDepth > 0);
+  const dropTarget = $derived(session?.liveCwd || session?.cwd || '');
+
+  function fmtBytes(n: number): string {
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+    if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+    return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+
+  function dragHasFiles(e: DragEvent): boolean {
+    return !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
+  }
+
+  function onDragEnter(e: DragEvent): void {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth += 1;
+  }
+  function onDragOver(e: DragEvent): void {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+  }
+  function onDragLeave(e: DragEvent): void {
+    if (!dragHasFiles(e)) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+  }
+  function onDrop(e: DragEvent): void {
+    if (!dragHasFiles(e)) return;
+    e.preventDefault();
+    dragDepth = 0;
+    const files = e.dataTransfer?.files;
+    if (files && files.length) void uploadFiles(Array.from(files));
+  }
+
+  async function uploadFiles(files: File[]): Promise<void> {
+    for (const file of files) {
+      const item: UploadItem = {
+        id: ++uploadSeq,
+        name: file.name,
+        loaded: 0,
+        total: file.size,
+        status: 'uploading',
+      };
+      uploads = [...uploads, item];
+      try {
+        await api.fsUpload(sessionId, file, {
+          onProgress: (loaded, total) => {
+            uploads = uploads.map((u) => (u.id === item.id ? { ...u, loaded, total } : u));
+          },
+        });
+        uploads = uploads.map((u) =>
+          u.id === item.id ? { ...u, status: 'done', loaded: u.total } : u,
+        );
+      } catch (e) {
+        uploads = uploads.map((u) =>
+          u.id === item.id ? { ...u, status: 'error', error: String(e) } : u,
+        );
+      }
+    }
+    filesPanel?.refresh();
+    // Keep failures and any still-running uploads on screen; clear the rest.
+    setTimeout(() => {
+      uploads = uploads.filter((u) => u.status !== 'done');
+    }, 4000);
+  }
+
+  function dismissUpload(id: number): void {
+    uploads = uploads.filter((u) => u.id !== id);
+  }
 
   const STATUS_LABEL: Record<'connecting' | 'open' | 'closed', string> = {
     connecting: '连接中',
@@ -139,6 +225,21 @@
       </button>
     {/if}
 
+    <button
+      class="ghost icon-only"
+      title={`主题：${THEME_LABEL[$themePref]}（点击切换）`}
+      aria-label="切换主题"
+      onclick={cycleTheme}
+    >
+      {#if $themePref === 'light'}
+        <Icon name="sun" size={15} />
+      {:else if $themePref === 'dark'}
+        <Icon name="moon" size={15} />
+      {:else}
+        <Icon name="monitor" size={15} />
+      {/if}
+    </button>
+
     <button class="ghost icon-only danger" onclick={destroy} title="销毁会话" aria-label="销毁会话">
       <Icon name="trash" size={15} />
     </button>
@@ -156,11 +257,20 @@
 
     {#if session}
       <div class="side-slot left">
-        <FilesPanel {sessionId} />
+        <FilesPanel bind:this={filesPanel} {sessionId} />
       </div>
     {/if}
 
-    <div class="term">
+    <div
+      class="term"
+      class:dragging
+      role="region"
+      aria-label="终端，可拖拽文件到此上传"
+      ondragenter={onDragEnter}
+      ondragover={onDragOver}
+      ondragleave={onDragLeave}
+      ondrop={onDrop}
+    >
       {#if notFound}
         <div class="empty">
           <Icon name="alert" size={22} />
@@ -175,6 +285,52 @@
           onExit={(info) => (exitInfo = info)}
           onStatus={(s) => (status = s)}
         />
+      {/if}
+
+      {#if dragging && session}
+        <div class="drop-overlay">
+          <div class="drop-card">
+            <Icon name="upload" size={28} />
+            <p class="drop-title">释放以上传到当前目录</p>
+            {#if dropTarget}
+              <p class="drop-path" title={dropTarget}>{dropTarget}</p>
+            {/if}
+          </div>
+        </div>
+      {/if}
+
+      {#if uploads.length}
+        <div class="uploads">
+          {#each uploads as u (u.id)}
+            <div class="upload-item" class:error={u.status === 'error'} class:done={u.status === 'done'}>
+              <span class="up-icon">
+                {#if u.status === 'done'}
+                  <Icon name="check" size={14} />
+                {:else if u.status === 'error'}
+                  <Icon name="alert" size={14} />
+                {:else}
+                  <Icon name="upload" size={14} />
+                {/if}
+              </span>
+              <div class="up-body">
+                <div class="up-row">
+                  <span class="up-name" title={u.name}>{u.name}</span>
+                  <button class="up-dismiss" onclick={() => dismissUpload(u.id)} aria-label="移除" title="移除">
+                    <Icon name="x" size={12} />
+                  </button>
+                </div>
+                {#if u.status === 'uploading'}
+                  <div class="up-bar"><div class="up-fill" style={`width: ${u.total ? Math.round((u.loaded / u.total) * 100) : 0}%`}></div></div>
+                  <span class="up-meta">{fmtBytes(u.loaded)} / {fmtBytes(u.total)}</span>
+                {:else if u.status === 'done'}
+                  <span class="up-meta ok">已上传 · {fmtBytes(u.total)}</span>
+                {:else}
+                  <span class="up-meta err">上传失败</span>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
       {/if}
     </div>
 
@@ -217,8 +373,8 @@
     font-weight: 500;
   }
   .status .dot { display: inline-flex; }
-  .status-connecting { background: #fff8e1; color: #946800; }
-  .status-open { background: #e6f4ea; color: var(--success); }
+  .status-connecting { background: var(--warning-soft); color: var(--warning); }
+  .status-open { background: var(--success-soft); color: var(--success); }
   .status-closed { background: var(--danger-soft); color: var(--danger); }
 
   .clients {
@@ -262,9 +418,101 @@
     padding: 10px;
     background: var(--bg-soft);
     display: flex;
+    position: relative;
   }
+
+  .drop-overlay {
+    position: absolute;
+    inset: 10px;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    border: 2px dashed var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, var(--bg-elev));
+    pointer-events: none;
+    backdrop-filter: blur(1px);
+  }
+  .drop-card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: var(--accent);
+    text-align: center;
+    padding: 0 16px;
+    max-width: 100%;
+  }
+  .drop-title { margin: 0; font-size: 15px; font-weight: 600; }
+  .drop-path {
+    margin: 0;
+    font-family: ui-monospace, "JetBrains Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--fg-muted);
+    max-width: min(420px, 80vw);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: ltr;
+  }
+
+  .uploads {
+    position: absolute;
+    right: 18px;
+    bottom: 18px;
+    z-index: 31;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: min(320px, calc(100% - 36px));
+    pointer-events: none;
+  }
+  .upload-item {
+    pointer-events: auto;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    padding: 10px 12px;
+  }
+  .upload-item.done { border-left-color: var(--success); }
+  .upload-item.error { border-left-color: var(--danger); }
+  .up-icon { display: inline-flex; color: var(--accent); margin-top: 1px; flex-shrink: 0; }
+  .upload-item.done .up-icon { color: var(--success); }
+  .upload-item.error .up-icon { color: var(--danger); }
+  .up-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+  .up-row { display: flex; align-items: center; gap: 8px; }
+  .up-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: ltr;
+  }
+  .up-dismiss {
+    flex-shrink: 0;
+    width: 20px; height: 20px;
+    padding: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border: none; background: transparent;
+    color: var(--fg-muted); cursor: pointer; border-radius: 4px;
+  }
+  .up-dismiss:hover { background: var(--bg-hover); color: var(--fg); }
+  .up-bar { height: 5px; border-radius: 999px; background: var(--bg-hover); overflow: hidden; }
+  .up-fill { height: 100%; background: var(--accent); border-radius: 999px; transition: width 0.12s linear; }
+  .up-meta { font-size: 11px; color: var(--fg-muted); }
+  .up-meta.ok { color: var(--success); }
+  .up-meta.err { color: var(--danger); }
   .term :global(.xterm-host) {
-    background: #ffffff;
+    background: var(--term-bg);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-sm);
