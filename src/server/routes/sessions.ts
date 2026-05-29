@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { type SessionHub, HubError } from '../pty/hub.js';
+import { foregroundForPids } from '../pty/foreground.js';
+import { shellCwd } from '../pty/shell-cwd.js';
 // Loose Fastify shape so we don't fight generics with whatever loggerInstance the caller used.
 type App = {
   get: (path: string, handler: (req: any, reply: any) => any) => unknown;
@@ -26,7 +28,22 @@ const inputSchema = z.object({
 });
 
 export function registerSessionRoutes(app: App, hub: SessionHub): void {
-  app.get('/api/sessions', async () => hub.list().map((s) => s.toJSON()));
+  app.get('/api/sessions', async () => {
+    const list = hub.list();
+    const [fg, cwds] = await Promise.all([
+      foregroundForPids(list.map((s) => s.pid)),
+      Promise.all(list.map((s) => shellCwd(s.pid))),
+    ]);
+    return list.map((s, i) => {
+      const info = s.pid != null ? fg.get(s.pid) : undefined;
+      return {
+        ...s.toJSON(),
+        foreground: info?.foreground ?? null,
+        agent: info?.agent ?? null,
+        liveCwd: cwds[i] ?? null,
+      };
+    });
+  });
 
   app.post('/api/sessions', async (req, reply) => {
     const parsed = createSchema.safeParse(req.body);
@@ -44,7 +61,14 @@ export function registerSessionRoutes(app: App, hub: SessionHub): void {
     const { id } = req.params as { id: string };
     const s = hub.get(id);
     if (!s) return reply.code(404).send({ error: 'not_found' });
-    return s.toJSON();
+    const [fg, liveCwd] = await Promise.all([foregroundForPids([s.pid]), shellCwd(s.pid)]);
+    const info = s.pid != null ? fg.get(s.pid) : undefined;
+    return {
+      ...s.toJSON(),
+      foreground: info?.foreground ?? null,
+      agent: info?.agent ?? null,
+      liveCwd: liveCwd ?? null,
+    };
   });
 
   app.post('/api/sessions/:id/input', async (req, reply) => {

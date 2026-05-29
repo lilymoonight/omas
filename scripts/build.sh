@@ -3,7 +3,10 @@
 #   - the Bun runtime
 #   - bundled server JS
 #   - SPA assets (base64-embedded)
-#   - prebuilt native addons (argon2 / node-pty, extracted at runtime)
+#
+# No native addons are embedded: password hashing uses the built-in
+# Bun.password (argon2id), and the PTY uses Bun.spawn — both are part of the
+# Bun runtime, so the binary is self-contained with no .node files.
 #
 # Usage:
 #   npm run build
@@ -85,10 +88,15 @@ mkdir -p release
 OUT="release/omas"
 rm -rf "$OUT"
 echo ">>> compiling single binary → $OUT"
+# argon2 is a *native* npm addon and is only imported on the Node code path
+# (under Bun we use the built-in Bun.password). Mark it external so the bundler
+# doesn't pull its node-gyp-build loader into the binary — that loader would
+# fail at runtime with "no native build was found for argon2".
 NODE_ENV=production "$BUN_BIN" build src/server/index.ts \
   --compile \
   --target "$BUN_TARGET" \
   --minify \
+  --external argon2 \
   --define 'process.env.NODE_ENV="production"' \
   --outfile "$OUT"
 

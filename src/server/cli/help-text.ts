@@ -1,6 +1,6 @@
 /** Shared help copy for `omas --help` and docs/MANUAL.md — keep in sync. */
 
-export const VERSION = '1.0.1';
+export const VERSION = '1.1.0';
 
 export const ROOT_SUMMARY = '自托管多会话 Web 终端（单文件二进制）';
 

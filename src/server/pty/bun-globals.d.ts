@@ -1,5 +1,18 @@
 /** Minimal Bun globals for files compiled only under the Bun runtime. */
 declare const Bun: {
+  /** Built-in password hashing (argon2id/bcrypt) — no native addon required. */
+  password: {
+    hash(
+      password: string,
+      algorithm?:
+        | 'bcrypt'
+        | 'argon2id'
+        | 'argon2d'
+        | 'argon2i'
+        | { algorithm: 'argon2id' | 'argon2d' | 'argon2i'; memoryCost?: number; timeCost?: number },
+    ): Promise<string>;
+    verify(password: string, hash: string): Promise<boolean>;
+  };
   spawn(
     args: string[],
     opts: {

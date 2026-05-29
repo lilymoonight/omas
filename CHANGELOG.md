@@ -4,12 +4,28 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
+## [1.1.0] - 2026-05-30
+
+### 新增
+
+- **会话 Agent 标识**：会话列表卡片显示当前前台程序——能识别 Claude / Cursor / Qoder 等 AI agent（即便经 node/python 等包装也能认出），其余程序显示命令名；空闲 shell 不显示徽标。
+- **实时工作目录**：卡片显示会话实时 cwd（跟随 `cd`），便于区分从同一默认目录启动的多个 agent。
+
+### 修复
+
+- **密码哈希原生模块缺失**：单文件二进制在设置密码 / 登录时报 `no native build was found for argon2`。改用 Bun 内置 `Bun.password`（argon2id，无需 native addon），Node 环境回退 `argon2` npm 包；PHC 格式互相兼容，二进制不再依赖任何 `.node` 文件。
+- **终端视口随机跳到 scrollback 顶部**：运行 TUI（cursor-agent / claude 等）时，resize / 重绘会让“是否贴底”的几何判断误判成“用户上滚”。改为显式跟踪用户滚动意图（滚轮 / 翻页键），只有用户主动上滚才停止贴底，否则始终贴住实时屏。
+
+### 优化
+
+- **服务端压力与运行时体验**：缓存 shell cwd / git status / 系统指标；headless 镜像批量写入并缓存快照；历史扫描以文件大小估算行数；前端按需懒加载、合并 xterm 写入。
 
 ### 文档
 
 - **命名说明**：README 明确 **omas** 为 **oh-my-agent-shell** 的缩写（o-m-a-s）。
 - **English README**：新增 [README.en.md](./README.en.md)，中英文 README 互相链接。
+
+[1.1.0]: https://github.com/lilymoonight/omas/releases/tag/v1.1.0
 
 ## [1.0.1] - 2026-05-23
 

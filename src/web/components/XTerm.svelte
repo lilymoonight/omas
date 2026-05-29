@@ -9,6 +9,7 @@
   import { canSyncTermSize, type AttachPhase } from '../lib/attach-sync.js';
   import { TERM_FONT_SIZE, TERM_LINE_HEIGHT } from '../lib/term-layout.js';
   import {
+    isViewportNearBottom,
     pinLiveScreen,
     scrollToLiveScreen,
     shouldStickToLiveScreen,
@@ -38,6 +39,14 @@
   let restoreScrollTimer: ReturnType<typeof setTimeout> | undefined;
   /** Keep viewport on the live screen through fit/resize during attach settle. */
   let stickToLiveScreen = false;
+  /**
+   * Set only when the user actively scrolls up to read history; cleared when
+   * they scroll back to (near) the bottom. Driven by real gestures so TUI
+   * redraws / resizes can't be misread as "scrolled up".
+   */
+  let userScrolledUp = false;
+  /** Re-evaluate scroll intent after a user gesture settles. */
+  let scrollIntentRaf: number | undefined;
   /** First attach settle (fonts + delayed fit) runs once per mount. */
   let attachSettled = false;
   /** Ignore fit/resize echoes while applying server snapshot dimensions. */
@@ -50,7 +59,21 @@
   }
 
   function liveFlags() {
-    return { stickToLiveScreen, pendingScrollBottom };
+    return { stickToLiveScreen, pendingScrollBottom, userScrolledUp };
+  }
+
+  /**
+   * Recompute scroll intent from the *current* viewport after a user gesture.
+   * The alt screen has no scrollback, so intent only applies to the normal
+   * buffer; there we treat "near the bottom" as still pinned to live.
+   */
+  function refreshScrollIntent(): void {
+    if (scrollIntentRaf !== undefined) cancelAnimationFrame(scrollIntentRaf);
+    scrollIntentRaf = requestAnimationFrame(() => {
+      scrollIntentRaf = undefined;
+      if (pendingScrollBottom) return;
+      userScrolledUp = !isViewportNearBottom(term);
+    });
   }
 
   function pinLive() {
@@ -207,6 +230,8 @@
       if (msg.truncated) {
         attachPhase = 'restoring';
         stickToLiveScreen = true;
+        // Full snapshot restore wipes the old viewport position; start pinned.
+        userScrolledUp = false;
         term.clear();
         // Snapshot bytes were serialized at msg.cols × msg.rows. Resizing the
         // server (or client fit) before they land desyncs TUI layout → bad wrap
@@ -223,13 +248,14 @@
       onClientCount?.(msg.clientCount);
     });
     socket.on('data', (bytes) => {
-      const flags = liveFlags();
-      const stick = !flags.pendingScrollBottom && shouldStickToLiveScreen(term, flags);
       const onDone = () => {
         if (pendingScrollBottom) {
           finishRestoreScroll();
           requestAnimationFrame(() => markAttachReady());
-        } else if (stick) {
+        } else if (shouldStickToLiveScreen(term, liveFlags())) {
+          // Re-check intent *after* the write lands: the data may have flipped
+          // to the alt screen or pushed new live output. Pinning here is what
+          // keeps a redrawing TUI from drifting up into old scrollback.
           scrollToLiveScreen(term);
         }
       };
@@ -264,6 +290,19 @@
     });
     resizeObserver.observe(host);
 
+    // Scroll intent comes from real user gestures only — never from buffer
+    // geometry. A resize/reflow or TUI redraw transiently moves viewportY, and
+    // reading that as "scrolled up" is exactly what snapped the viewport to old
+    // scrollback at random. Wheel + scroll keys cover scrolling up and back.
+    host.addEventListener('wheel', refreshScrollIntent, { passive: true });
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === 'keydown' && (e.key === 'PageUp' || e.key === 'PageDown'
+        || (e.shiftKey && (e.key === 'Home' || e.key === 'End')))) {
+        refreshScrollIntent();
+      }
+      return true;
+    });
+
     socket.connect();
     setTimeout(() => term.focus(), 0);
   });
@@ -274,6 +313,8 @@
     if (restoreScrollTimer !== undefined) clearTimeout(restoreScrollTimer);
     if (syncDebounceTimer !== undefined) clearTimeout(syncDebounceTimer);
     if (resizeRaf !== undefined) cancelAnimationFrame(resizeRaf);
+    if (scrollIntentRaf !== undefined) cancelAnimationFrame(scrollIntentRaf);
+    host?.removeEventListener('wheel', refreshScrollIntent);
     resizeObserver?.disconnect();
     socket?.close();
     term?.dispose();

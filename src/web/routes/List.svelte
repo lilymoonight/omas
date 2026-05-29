@@ -13,6 +13,12 @@
   let renamingId = $state<string | null>(null);
   let renameValue = $state('');
 
+  const AGENT_LABEL: Record<string, string> = {
+    claude: 'Claude',
+    cursor: 'Cursor',
+    qoder: 'Qoder',
+  };
+
   onMount(() => startSessionPolling());
   onDestroy(() => stopSessionPolling());
 
@@ -71,6 +77,14 @@
   async function logout() {
     await fetch(apiBase + 'auth/logout', { method: 'POST', credentials: 'same-origin' });
     await checkAuth();
+  }
+
+  /** Compact cwd for the card: keep the last two path segments, full path in tooltip. */
+  function fmtCwd(p: string): string {
+    const parts = p.split('/').filter(Boolean);
+    if (parts.length === 0) return '/';
+    if (parts.length <= 2) return '/' + parts.join('/');
+    return '…/' + parts.slice(-2).join('/');
   }
 
   function fmtAgo(iso: string): string {
@@ -150,8 +164,22 @@
               {:else}
                 <span class="card-title">{s.title}</span>
               {/if}
+              {#if s.agent}
+                <span class="agent-badge agent-{s.agent}" title={`当前运行：${AGENT_LABEL[s.agent] ?? s.agent}`}>
+                  <Icon name="sparkles" size={12} />
+                  {AGENT_LABEL[s.agent] ?? s.agent}
+                </span>
+              {:else if s.foreground}
+                <span class="fg-badge" title={`前台进程：${s.foreground}`}>{s.foreground}</span>
+              {/if}
             </div>
             <div class="meta">
+              {#if s.liveCwd ?? s.cwd}
+                <span class="chip chip-cwd" title={`工作目录：${s.liveCwd ?? s.cwd}`}>
+                  <Icon name="folder" size={12} />
+                  {fmtCwd((s.liveCwd ?? s.cwd) as string)}
+                </span>
+              {/if}
               <span class="chip" title="使用的 shell">{s.shell.split('/').pop()}</span>
               <span class="chip" title="终端尺寸">{s.cols} × {s.rows}</span>
               <span class="chip" title={s.lastActivityAt}>活跃于 {fmtAgo(s.lastActivityAt)}</span>
@@ -266,6 +294,30 @@
   .card-head { display: flex; align-items: center; gap: 8px; }
   .card-icon { color: var(--accent); display: inline-flex; }
   .card-title { font-weight: 600; font-size: 14.5px; color: var(--fg); }
+
+  .agent-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .agent-claude { background: #fbeee0; color: #b4530a; }
+  .agent-cursor { background: #e7eaf3; color: #3a3f57; }
+  .agent-qoder  { background: #e6f0ff; color: #1d5fd6; }
+  .fg-badge {
+    display: inline-flex; align-items: center;
+    background: var(--bg-hover);
+    color: var(--fg-muted);
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: 11px;
+    font-family: var(--mono, monospace);
+    line-height: 1.5;
+    white-space: nowrap;
+  }
   .rename {
     flex: 1; padding: 4px 8px; font-size: 14px; font-weight: 600;
   }
@@ -285,6 +337,12 @@
     color: var(--accent);
     font-weight: 500;
   }
+  .chip-cwd {
+    max-width: 240px;
+    color: var(--fg);
+    font-family: var(--mono, monospace);
+  }
+  .chip-cwd > :global(svg) { flex-shrink: 0; color: var(--fg-muted); }
 
   .actions {
     display: flex; align-items: center; gap: 4px;
