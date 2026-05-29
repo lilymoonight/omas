@@ -81,10 +81,13 @@ describe('PtySession (spawns real shell)', () => {
     try {
       s.write('PS1= ; export PS1\n');
       s.write('echo snap-marker-9c2e\n');
-      await waitFor(() => {
-        const snap = s.serializeSnapshot();
-        return snap.bytes.toString().includes('snap-marker-9c2e') ? true : undefined;
-      });
+      // Poll the cheap ring buffer for the marker first; rebuilding a headless
+      // terminal via serializeSnapshot() on every tick is expensive and can
+      // starve the event loop on slow CI runners, causing spurious timeouts.
+      await waitFor(
+        () => (s.ring.since(0).bytes.toString().includes('snap-marker-9c2e') ? true : undefined),
+        8000,
+      );
       const snap = s.serializeSnapshot();
       expect(snap.bytes.length).toBeGreaterThan(0);
       expect(snap.bytes.toString()).toContain('snap-marker-9c2e');
