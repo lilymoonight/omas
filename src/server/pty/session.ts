@@ -205,7 +205,12 @@ export class PtySession extends EventEmitter {
       // Headless terminal/serializer can throw on edge cases; fall back to empty.
     }
     const result = { bytes: Buffer.from(s, 'utf8'), cols: this.cols, rows: this.rows };
-    this.snapshotCache = result;
+    // `headless.write()` parses asynchronously, so a snapshot taken immediately
+    // after a flush can come back empty before the parser has caught up. Caching
+    // that empty result would lock it in until the next byte arrives (which may
+    // never happen for an idle session). Only cache once we have real content;
+    // an empty screen is cheap to re-serialize anyway.
+    if (s !== '') this.snapshotCache = result;
     return result;
   }
 

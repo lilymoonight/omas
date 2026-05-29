@@ -88,7 +88,13 @@ describe('PtySession (spawns real shell)', () => {
         () => (s.ring.since(0).bytes.toString().includes('snap-marker-9c2e') ? true : undefined),
         8000,
       );
-      const snap = s.serializeSnapshot();
+      // The headless mirror parses writes asynchronously, so the marker may not
+      // be in the serialized buffer the instant it lands in the ring. Poll the
+      // snapshot until the parser catches up.
+      const snap = await waitFor(() => {
+        const snap = s.serializeSnapshot();
+        return snap.bytes.toString().includes('snap-marker-9c2e') ? snap : undefined;
+      }, 4000);
       expect(snap.bytes.length).toBeGreaterThan(0);
       expect(snap.bytes.toString()).toContain('snap-marker-9c2e');
     } finally {
