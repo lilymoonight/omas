@@ -1,6 +1,6 @@
 {
   "name": "oh-my-agent-shell",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Lightweight self-hosted terminal for the agent era — separate sessions, disposable tabs, background PTY, auto-scan AI history, focused on terminal with just-enough file edit & diff review.",
   "type": "module",
   "license": "MIT",
@@ -74,6 +74,7 @@
     "@types/ws": "^8.5.13",
     "@xterm/addon-clipboard": "^0.1.0",
     "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-search": "^0.16.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",

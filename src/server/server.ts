@@ -21,6 +21,9 @@ import { registerAuthRoutes, makeAuthGuard, isAuthedFromRawHeaders } from './aut
 import { autoInitConfig } from './auth/auto-init.js';
 import { resolveDefaultCwd } from './pty/default-cwd.js';
 import { UploadStore } from './pty/upload-store.js';
+import { parsePublishArgs, type SiteSpec } from './sites/util.js';
+import { SiteManager } from './sites/manager.js';
+import { registerSiteRoutes } from './sites/routes.js';
 
 export type ServerConfig = {
   host: string;
@@ -34,11 +37,18 @@ export type ServerConfig = {
   passwordInline?: string;
   /** Path to a file containing the password (will be read + trimmed). */
   passwordFile?: string;
+  /** `slug=dir` entries from --publish (no-auth static sites). */
+  publish?: string[];
+  /** `slug=dir` entries from --publish-spa (no-auth SPA sites). */
+  publishSpa?: string[];
 };
 
 export async function createServer(config: ServerConfig) {
   const dir = resolveConfigDir(config.configDir);
   let cfg: Config | null = loadConfig(dir);
+  // Disk-backed config can always be re-saved. Memory-only configs can't safely
+  // persist a password hash, so site-config writes are gated on this below.
+  const diskBacked = cfg !== null;
   // When --password or --password-file is given, always use that (don't fall
   // through to whatever's persisted on disk). This makes the flag predictable.
   if (config.passwordInline || config.passwordFile) {
@@ -94,6 +104,21 @@ export async function createServer(config: ServerConfig) {
     !isAuthRequired(cfg) || isAuthedFromRawHeaders(req, store),
   );
 
+  // Public, no-auth static sites (/p/<slug>/). Persistent entries live in
+  // config.json (editable via /api/sites + the publish page); --publish flags
+  // add ephemeral ones on top. Saving site config to disk is only allowed when
+  // we won't accidentally persist a memory-only password.
+  let cliSpecs: SiteSpec[] = [];
+  try {
+    cliSpecs = parsePublishArgs(config.publish ?? [], config.publishSpa ?? []);
+  } catch (err) {
+    logger.error({ err: (err as Error).message }, 'invalid --publish argument');
+    throw err;
+  }
+  const canPersistSites = diskBacked || !cfg.passwordHash;
+  const siteManager = new SiteManager(dir, cfg, cliSpecs, canPersistSites);
+  registerSiteRoutes(app, siteManager);
+
   // Web assets: prefer the embedded manifest (single-binary case) — it ships
   // inside the binary and survives compile-time. Fall back to disk for normal
   // Node dev/prod runs.
@@ -119,6 +144,9 @@ export async function createServer(config: ServerConfig) {
       const idx = embedded!.get('/index.html');
       if (!idx) return reply.code(404).send({ error: 'not_found' });
       reply.header('content-type', idx.mime);
+      // The SPA entry must always revalidate; otherwise browsers heuristically
+      // cache it and keep loading old (hashed) asset bundles after a redeploy.
+      reply.header('cache-control', 'no-cache');
       return reply.send(idx.body);
     });
     logger.info({ files: embedded.count }, 'serving embedded web assets');

@@ -19,6 +19,11 @@ import {
   SERVICE_UNINSTALL_DESCRIPTION,
 } from './cli/help-text.js';
 
+/** Commander collector for repeatable `--flag value` options. */
+function collectKeyVal(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 const program = new Command();
 
 program
@@ -48,6 +53,18 @@ program
   .option('--scrollback-bytes <n>', '每会话 scrollback 字节数', '524288')
   .option('--password <pw>', '登录密码（仅内存，ps 可见，适合本地调试）')
   .option('--password-file <path>', '从文件读取密码（仅内存，比 --password 更安全）')
+  .option(
+    '--publish <slug=dir>',
+    '发布目录为免密公开静态站点 /p/<slug>/（可重复）',
+    collectKeyVal,
+    [] as string[],
+  )
+  .option(
+    '--publish-spa <slug=dir>',
+    '同 --publish，但找不到文件时回退 index.html（适合 SPA，可重复）',
+    collectKeyVal,
+    [] as string[],
+  )
   .addHelpText(
     'after',
     `
@@ -55,7 +72,9 @@ program
   OMAS_PASSWORD=secret omas serve
   omas serve --port 8080 --cwd ~/projects/my-app
   omas serve --password-file /run/omas/password
+  omas serve --publish report=./dist --publish-spa app=./build
 
+公开站点: --publish 的目录挂在 /p/<slug>/，不需要密码即可访问，便于分享工作结果。
 默认启动目录: --cwd > OMAS_CWD > config.json defaultCwd > 启动 omas 时的 process.cwd()
 `.trim(),
   )
@@ -70,6 +89,8 @@ program
       scrollbackBytes: parseInt(opts.scrollbackBytes, 10),
       passwordInline: opts.password,
       passwordFile: opts.passwordFile,
+      publish: opts.publish,
+      publishSpa: opts.publishSpa,
     });
     const addr = await app.listen({ host: opts.host, port: parseInt(opts.port, 10) });
     logger.info({ addr }, 'omas listening');

@@ -11,6 +11,7 @@ export type Route =
   | { name: 'list' }
   | { name: 'terminal'; id: string }
   | { name: 'history' }
+  | { name: 'publish' }
   | { name: 'login' };
 
 function parse(hash: string): Route {
@@ -18,6 +19,7 @@ function parse(hash: string): Route {
   if (!h || h === '/') return { name: 'list' };
   if (h === '/login') return { name: 'login' };
   if (h === '/history') return { name: 'history' };
+  if (h === '/publish') return { name: 'publish' };
   const m = /^\/s\/([A-Za-z0-9_-]+)$/.exec(h);
   if (m) return { name: 'terminal', id: m[1]! };
   return { name: 'list' };
@@ -34,6 +36,7 @@ export function navigate(to: Route): void {
   if (to.name === 'terminal') hash = `#/s/${to.id}`;
   else if (to.name === 'login') hash = '#/login';
   else if (to.name === 'history') hash = '#/history';
+  else if (to.name === 'publish') hash = '#/publish';
   if (window.location.hash !== hash) {
     window.location.hash = hash;
   }

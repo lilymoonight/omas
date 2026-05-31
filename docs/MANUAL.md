@@ -128,6 +128,8 @@ omas [选项]                    # 省略 serve 时等价
 | `--scrollback-bytes <n>` | | `524288`（512 KiB） | 每会话 scrollback 环形缓冲区大小 |
 | `--password <pw>` | | — | 登录密码（**仅内存**，`ps` 可见，不落盘） |
 | `--password-file <path>` | | — | 从文件读密码（trim 后使用，**仅内存**） |
+| `--publish <slug=dir>` | | — | 把目录挂到 `/p/<slug>/` 作**免密公开静态站点**（可重复） |
+| `--publish-spa <slug=dir>` | | — | 同上，但未命中文件时回退 `index.html`（适合单页应用，可重复） |
 
 **示例**
 
@@ -144,7 +146,22 @@ omas serve --password-file /run/omas/password
 
 # 局域网（务必加 nginx + HTTPS）
 omas serve --host 0.0.0.0 --port 7681
+
+# 发布静态站点（免密访问，便于分享工作结果）
+omas serve --publish report=./dist --publish-spa app=./build
+# → http://<host>:<port>/p/report/   和   /p/app/
 ```
+
+#### 公开静态站点（免密托管）
+
+把构建产物 / 报告 / 任意静态目录挂到 `/p/<slug>/`，**不需要 omas 密码**即可访问，方便把工作结果以网页形式分享给别人或自己回看。
+
+- 路径：每个站点位于 `/p/<slug>/`；`slug` 仅允许字母数字与 `. _ -`，不以符号开头。
+- 来源：`--publish` / `--publish-spa`（可重复），或 `config.json` 的 `sites` 数组（CLI 同名 slug 覆盖配置）。
+- SPA：`--publish-spa`（或 `sites[].spa: true`）在找不到文件时回退该站点的 `index.html`，适配前端路由。
+- 安全：内置路径越界防护（拒绝 `..`、绝对路径、NUL），目录自动补 `/` 并尝试 `index.html`，响应带 `no-cache` 与 `X-Content-Type-Options: nosniff`。
+- **暴露范围**：公开站点随服务监听地址一同对外。仅本机用默认 `127.0.0.1`；要让别人访问需 `--host 0.0.0.0` 或反向代理/隧道，此时该目录内容对能访问到端口的人均可见，请勿发布含敏感信息的目录。
+- 列表页「公开站点」区可一键复制分享链接（自动适配反向代理前缀）。
 
 ---
 
@@ -305,9 +322,16 @@ omas service uninstall [--system]
 {
   "passwordHash": "$argon2id$...",
   "cookieSecret": "...",
-  "createdAt": "2026-01-01T00:00:00.000Z"
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "defaultCwd": "/home/me/projects",
+  "sites": [
+    { "slug": "report", "root": "/home/me/app/dist" },
+    { "slug": "app", "root": "/home/me/app/build", "spa": true }
+  ]
 }
 ```
+
+> `sites`：免密公开静态站点列表（挂到 `/p/<slug>/`），等价于持久化的 `--publish`。`spa: true` 对应 `--publish-spa`。命令行 `--publish*` 与此处同名 slug 时以命令行为准。
 
 ### 环境变量
 
@@ -398,6 +422,17 @@ Content-Type: application/json
 | POST | `/api/sessions` | 创建 `{ "cols", "rows", "name?" }` |
 | PATCH | `/api/sessions/:id` | 重命名 |
 | DELETE | `/api/sessions/:id` | 销毁 |
+
+### 公开站点
+
+| 方法 | 路径 | 认证 | 说明 |
+|------|------|------|------|
+| GET | `/api/sites` | 需登录 | `{ canPersist, sites: [{ slug, url, root, spa, cli }] }`；`cli` 表示由 `--publish` 提供（不可在页面编辑） |
+| POST | `/api/sites` | 需登录 | 新增 / 覆盖持久化站点 `{ slug, root, spa? }`；写入 `config.json` 且即时生效。`canPersist=false` 时返回 409 |
+| DELETE | `/api/sites/:slug` | 需登录 | 取消发布（仅停服务，不删目录文件）。CLI 站点返回 409 |
+| GET | `/p/<slug>/...` | **免密** | 静态站点内容 |
+
+> 网页管理：列表页「发布」按钮进入发布管理页（`#/publish`），可视化新增 / 删除站点、切换 SPA、复制分享链接，改动无需重启即时生效。`canPersist` 为 `false`（内存配置 / 临时密码）时页面只读，需先 `omas init` 或改用 `--publish`。
 
 ### 终端 WebSocket
 

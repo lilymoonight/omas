@@ -2,6 +2,7 @@ import { writable } from 'svelte/store';
 import type { Session } from '../../shared/session.js';
 import { api, apiBase } from './api.js';
 import { sessionsEqual } from './stable-update.js';
+import { backgroundPollWanted } from './notifications.js';
 
 export type AuthState = 'unknown' | 'in' | 'out';
 export const auth = writable<AuthState>('unknown');
@@ -37,7 +38,11 @@ export function startSessionPolling(intervalMs = 3000): void {
   stopSessionPolling();
   void refreshSessions();
   pollTimer = setInterval(() => {
-    if (document.visibilityState === 'visible') void refreshSessions();
+    // Keep polling while hidden only when notifications are on, so agent
+    // idle transitions can still be detected and surfaced in the background.
+    if (document.visibilityState === 'visible' || backgroundPollWanted()) {
+      void refreshSessions();
+    }
   }, intervalMs);
 }
 

@@ -19,6 +19,7 @@
   });
 
   let HistoryRoute = $state<Component | null>(null);
+  let PublishRoute = $state<Component | null>(null);
 
   onMount(() => {
     void checkAuth();
@@ -27,6 +28,9 @@
     });
     void import('./routes/Terminal.svelte').then((m) => {
       TerminalRoute = m.default;
+    });
+    void import('./routes/Publish.svelte').then((m) => {
+      PublishRoute = m.default;
     });
   });
 </script>
@@ -48,6 +52,12 @@
 {:else if current.name === 'history'}
   {#if HistoryRoute}
     <HistoryRoute />
+  {:else}
+    <main class="boot">加载中…</main>
+  {/if}
+{:else if current.name === 'publish'}
+  {#if PublishRoute}
+    <PublishRoute />
   {:else}
     <main class="boot">加载中…</main>
   {/if}

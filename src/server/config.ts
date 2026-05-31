@@ -4,12 +4,24 @@ import os from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
+export const siteSpecSchema = z.object({
+  slug: z.string().min(1),
+  root: z.string().min(1),
+  spa: z.boolean().optional(),
+});
+
 export const configSchema = z.object({
   passwordHash: z.string().min(1).optional(),
   cookieSecret: z.string().min(32),
   createdAt: z.string(),
   /** Default directory for new PTY sessions when the client omits cwd. */
   defaultCwd: z.string().min(1).optional(),
+  /**
+   * Public, no-auth static sites served under /p/<slug>/. Lets the operator
+   * publish build output / reports so others can view work results in a browser
+   * without the omas password. CLI --publish flags merge on top of these.
+   */
+  sites: z.array(siteSpecSchema).optional(),
 });
 export type Config = z.infer<typeof configSchema>;
 

@@ -5,6 +5,8 @@
   import { WebLinksAddon } from '@xterm/addon-web-links';
   import { WebglAddon } from '@xterm/addon-webgl';
   import { ClipboardAddon } from '@xterm/addon-clipboard';
+  import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
+  import Icon from './Icon.svelte';
   import { SessionSocket } from '../lib/ws.js';
   import { canSyncTermSize, type AttachPhase } from '../lib/attach-sync.js';
   import { TERM_FONT_SIZE, TERM_LINE_HEIGHT } from '../lib/term-layout.js';
@@ -69,6 +71,12 @@
   };
   const termTheme = (t: ResolvedTheme) => (t === 'dark' ? DARK_TERM_THEME : LIGHT_TERM_THEME);
 
+  // Search-match highlight colors, picked to read well against each terminal palette.
+  const searchDecorations = (t: ResolvedTheme) =>
+    t === 'dark'
+      ? { matchBackground: '#574a1f', activeMatchBackground: '#bb8009', matchOverviewRuler: '#d29922', activeMatchColorOverviewRuler: '#e3b341' }
+      : { matchBackground: '#fff1b8', activeMatchBackground: '#f7c948', matchOverviewRuler: '#9a6700', activeMatchColorOverviewRuler: '#9a6700' };
+
   interface Props {
     sessionId: string;
     onTitle?: (title: string) => void;
@@ -82,7 +90,19 @@
   let term: Terminal;
   let unsubTheme: (() => void) | undefined;
   let fit: FitAddon;
+  let search: SearchAddon;
   let socket: SessionSocket;
+
+  // Scrollback search (Cmd/Ctrl+F). Highlights matches and lets the user step
+  // through them while an agent's long output sits in scrollback.
+  let searchInput = $state<HTMLInputElement | null>(null);
+  let searchOpen = $state(false);
+  let searchTerm = $state('');
+  let searchCase = $state(false);
+  let searchRegex = $state(false);
+  let matchIndex = $state(0);
+  let matchTotal = $state(0);
+  let currentTheme: ResolvedTheme = 'light';
   let writeBatch: TermWriteBatch | undefined;
   let resizeObserver: ResizeObserver;
   let resizeRaf: number | undefined;
@@ -228,6 +248,65 @@
     });
   }
 
+  function searchOptions(): ISearchOptions {
+    return {
+      caseSensitive: searchCase,
+      regex: searchRegex,
+      decorations: searchDecorations(currentTheme),
+    };
+  }
+
+  function runSearch(direction: 'next' | 'prev' = 'next'): void {
+    if (!search) return;
+    const q = searchTerm;
+    if (!q) {
+      search.clearDecorations();
+      matchIndex = 0;
+      matchTotal = 0;
+      return;
+    }
+    if (direction === 'prev') search.findPrevious(q, searchOptions());
+    else search.findNext(q, searchOptions());
+  }
+
+  function openSearch(): void {
+    searchOpen = true;
+    // Reading scrollback — don't let live output yank the viewport to the bottom.
+    userScrolledUp = true;
+    const sel = term?.getSelection();
+    if (sel && !sel.includes('\n') && sel.length <= 200) searchTerm = sel;
+    requestAnimationFrame(() => {
+      searchInput?.focus();
+      searchInput?.select();
+      if (searchTerm) runSearch('next');
+    });
+  }
+
+  function closeSearch(): void {
+    searchOpen = false;
+    search?.clearDecorations();
+    matchIndex = 0;
+    matchTotal = 0;
+    term?.focus();
+    // Re-evaluate whether we're back at the live screen.
+    refreshScrollIntent();
+  }
+
+  function toggleSearch(): void {
+    if (searchOpen) closeSearch();
+    else openSearch();
+  }
+
+  function onSearchKeydown(e: KeyboardEvent): void {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      runSearch(e.shiftKey ? 'prev' : 'next');
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSearch();
+    }
+  }
+
   onMount(() => {
     // Track current theme; the subscription fires synchronously here, so
     // `current` is set before the Terminal is constructed, and later toggles
@@ -235,7 +314,12 @@
     let current: ResolvedTheme = 'light';
     unsubTheme = resolvedTheme.subscribe((t) => {
       current = t;
-      if (term) term.options.theme = termTheme(t);
+      currentTheme = t;
+      if (term) {
+        term.options.theme = termTheme(t);
+        // Re-highlight with palette-matched colors after a theme flip.
+        if (searchOpen && searchTerm) runSearch('next');
+      }
     });
 
     term = new Terminal({
@@ -251,6 +335,12 @@
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
     term.loadAddon(new ClipboardAddon());
+    search = new SearchAddon();
+    term.loadAddon(search);
+    search.onDidChangeResults(({ resultIndex, resultCount }) => {
+      matchTotal = resultCount;
+      matchIndex = resultCount > 0 ? resultIndex + 1 : 0;
+    });
     term.open(host);
     try {
       term.loadAddon(new WebglAddon());
@@ -334,6 +424,20 @@
     // scrollback at random. Wheel + scroll keys cover scrolling up and back.
     host.addEventListener('wheel', refreshScrollIntent, { passive: true });
     term.attachCustomKeyEventHandler((e) => {
+      // Cmd/Ctrl+F opens scrollback search instead of the browser's find — but
+      // only on the normal buffer. On the alt screen a full-screen TUI (vim,
+      // cursor-agent/claude TUI) owns Ctrl+F, and there's no scrollback to search.
+      if (
+        e.type === 'keydown'
+        && (e.metaKey || e.ctrlKey)
+        && !e.altKey
+        && (e.key === 'f' || e.key === 'F')
+        && (e.metaKey || term.buffer.active.type === 'normal')
+      ) {
+        e.preventDefault();
+        openSearch();
+        return false;
+      }
       if (e.type === 'keydown' && (e.key === 'PageUp' || e.key === 'PageDown'
         || (e.shiftKey && (e.key === 'Home' || e.key === 'End')))) {
         refreshScrollIntent();
@@ -360,9 +464,65 @@
   });
 </script>
 
-<div class="xterm-host" bind:this={host}></div>
+<div class="xterm-shell">
+  <div class="xterm-host" bind:this={host}></div>
+
+  {#if searchOpen}
+    <div class="search-bar" role="search">
+      <span class="search-icon"><Icon name="search" size={14} /></span>
+      <input
+        class="search-field"
+        type="text"
+        placeholder="搜索输出…"
+        spellcheck="false"
+        autocomplete="off"
+        bind:this={searchInput}
+        bind:value={searchTerm}
+        oninput={() => runSearch('next')}
+        onkeydown={onSearchKeydown}
+      />
+      <span class="search-count" class:empty={searchTerm && matchTotal === 0}>
+        {#if searchTerm}{matchIndex}/{matchTotal}{:else}—{/if}
+      </span>
+      <button
+        class="search-toggle"
+        class:on={searchCase}
+        title="区分大小写"
+        aria-label="区分大小写"
+        aria-pressed={searchCase}
+        onclick={() => { searchCase = !searchCase; runSearch('next'); }}
+      >Aa</button>
+      <button
+        class="search-toggle"
+        class:on={searchRegex}
+        title="正则表达式"
+        aria-label="正则表达式"
+        aria-pressed={searchRegex}
+        onclick={() => { searchRegex = !searchRegex; runSearch('next'); }}
+      >.*</button>
+      <button class="search-btn" title="上一个（Shift+Enter）" aria-label="上一个匹配" onclick={() => runSearch('prev')}>
+        <Icon name="arrow-up" size={14} />
+      </button>
+      <button class="search-btn" title="下一个（Enter）" aria-label="下一个匹配" onclick={() => runSearch('next')}>
+        <Icon name="arrow-down" size={14} />
+      </button>
+      <button class="search-btn" title="关闭（Esc）" aria-label="关闭搜索" onclick={closeSearch}>
+        <Icon name="x" size={14} />
+      </button>
+    </div>
+  {/if}
+</div>
 
 <style>
+  /* Shell wraps the bare terminal host plus the floating search bar so the bar
+     can position relative to the terminal without disturbing FitAddon's sizing. */
+  .xterm-shell {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+  }
   /* Host is intentionally bare — no padding, no border, no margin.
      FitAddon divides clientHeight by cell height and floors; any extra
      padding here makes the last row come out half-shown. Put the visual
@@ -378,4 +538,76 @@
   :global(.xterm-viewport) {
     background-color: transparent !important;
   }
+
+  .search-bar {
+    position: absolute;
+    top: 10px;
+    right: 16px;
+    z-index: 25;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 6px 5px 10px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border-strong, var(--border));
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+  }
+  .search-icon { display: inline-flex; color: var(--fg-muted); flex-shrink: 0; }
+  .search-field {
+    width: 200px;
+    max-width: 40vw;
+    border: none;
+    background: transparent;
+    color: var(--fg);
+    font-size: 13px;
+    padding: 2px 2px;
+    outline: none;
+  }
+  .search-field::placeholder { color: var(--fg-muted); }
+  .search-count {
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    font-variant-numeric: tabular-nums;
+    min-width: 34px;
+    text-align: right;
+    padding: 0 2px;
+    white-space: nowrap;
+  }
+  .search-count.empty { color: var(--danger); }
+  .search-toggle {
+    flex-shrink: 0;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 4px;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--fg-muted);
+    font-size: 11.5px;
+    font-weight: 600;
+    font-family: var(--mono, monospace);
+    cursor: pointer;
+    line-height: 1;
+  }
+  .search-toggle:hover { background: var(--bg-hover); color: var(--fg); }
+  .search-toggle.on {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+  .search-btn {
+    flex-shrink: 0;
+    width: 26px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .search-btn:hover { background: var(--bg-hover); color: var(--fg); }
 </style>

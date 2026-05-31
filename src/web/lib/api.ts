@@ -1,7 +1,10 @@
 // Compute paths from window.location so we work under arbitrary reverse-proxy bases
 // (nginx /foo/, VSCode tunnels, etc).
 
-export const apiBase = new URL('./api/', window.location.href).pathname;
+export const apiBase =
+  typeof window !== 'undefined'
+    ? new URL('./api/', window.location.href).pathname
+    : '/api/';
 
 export function wsUrl(path: string): string {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -87,6 +90,9 @@ export type FsReadResp =
   | { path: string; content: string; clipped: boolean; binary: false; size: number }
   | { path: string; binary: true; clipped: false; size: number };
 export type FsUploadResp = { ok: true; path: string; name: string; size: number };
+
+export type PublicSite = { slug: string; url: string; spa: boolean; root: string; cli: boolean };
+export type SitesResp = { canPersist: boolean; sites: PublicSite[] };
 
 export type UploadOpts = {
   dir?: string;
@@ -234,6 +240,10 @@ export const api = {
   fsWrite: (id: string, path: string, content: string) =>
     req<{ ok: true; path: string; size: number }>('PUT', `sessions/${id}/fs/write`, { path, content }),
   fsUpload: uploadFile,
+  listSites: () => req<SitesResp>('GET', 'sites'),
+  createSite: (input: { slug: string; root: string; spa?: boolean }) =>
+    req<PublicSite>('POST', 'sites', input),
+  deleteSite: (slug: string) => req<{ ok: boolean }>('DELETE', `sites/${encodeURIComponent(slug)}`),
   history: (opts?: HistorySource[] | { sources?: HistorySource[]; refresh?: boolean }) => {
     const sources = Array.isArray(opts) ? opts : opts?.sources;
     const refresh = !Array.isArray(opts) && opts?.refresh;
