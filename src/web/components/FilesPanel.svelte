@@ -430,9 +430,9 @@
     gap: 1px;
     flex-shrink: 0;
     padding-right: 2px;
-    /* Kept dimly visible (not hover-only) so the actions are discoverable at a
-       glance and usable on touch devices; they brighten on hover/focus. */
-    opacity: 0.4;
+    /* Kept clearly visible (not hover-only) so the actions are discoverable at a
+       glance and usable on touch devices; they go full-strength on hover/focus. */
+    opacity: 0.7;
     transition: opacity 0.1s ease;
   }
   .row-wrap:hover .row-actions,
@@ -441,8 +441,12 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    box-sizing: border-box;
+    flex-shrink: 0;
     width: 22px;
     height: 22px;
+    margin: 0;
+    padding: 0;
     border: none;
     background: transparent;
     color: var(--fg-muted);

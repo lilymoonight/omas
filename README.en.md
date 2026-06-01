@@ -38,6 +38,8 @@ A self-hosted web terminal for AI-assisted development. Not an agent, not an IDE
 - **Idle notifications** — when an agent goes from "working" to "idle," a system notification fires in the background tab (click to open the session), with a pending badge on the title and favicon that clears when you return.
 - **Group sessions by project** — clustered by live working directory with an oh-my-zsh-style colorful path breadcrumb; collapsible, state persisted.
 - **Live working directory** — cards show each session's live cwd (follows `cd`).
+- **Remote-compute CLI** — `omas exec / upload / download` let a **local agent** use a remote host as compute: push code, run commands and capture output (exit code preserved), pull results — all over the same domain + TLS. `omas connect` also gives an ssh-like local terminal into a remote session.
+- **Session sandbox (Linux / macOS)** — `--sandbox-root` confines a session (and any agent in it) to **read-only everywhere except its working directory**, with the writable area forced inside `sandbox-root` (bwrap on Linux, sandbox-exec on macOS — picked automatically). Opting out needs a separate bypass password (`omas passwd --bypass`), never given to the agent.
 
 ### Files & change review
 

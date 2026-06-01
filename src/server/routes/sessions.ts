@@ -2,6 +2,10 @@ import { z } from 'zod';
 import { type SessionHub, HubError } from '../pty/hub.js';
 import { foregroundForPids } from '../pty/foreground.js';
 import { shellCwd } from '../pty/shell-cwd.js';
+import { resolveSandboxDir, type SandboxSettings } from '../pty/sandbox.js';
+import { verifyPassword } from '../auth/password.js';
+import type { LoginLimiter } from '../auth/limiter.js';
+import type { Config } from '../config.js';
 // Loose Fastify shape so we don't fight generics with whatever loggerInstance the caller used.
 type App = {
   get: (path: string, handler: (req: any, reply: any) => any) => unknown;
@@ -17,7 +21,20 @@ const createSchema = z.object({
   cols: z.number().int().min(2).max(1000),
   rows: z.number().int().min(2).max(500),
   initialCommand: z.string().min(1).max(2048).optional(),
+  /** Explicit sandbox on/off. Omitted → server's default policy. */
+  sandbox: z.boolean().optional(),
+  /** Bypass password, required only to create an unsandboxed session. */
+  bypass: z.string().max(200).optional(),
 });
+
+export type SessionRouteOpts = {
+  /** Active sandbox policy, or null when sandboxing isn't configured. */
+  sandbox?: SandboxSettings | null;
+  /** Loaded config (for the unsandboxed-bypass hash). */
+  config?: Config | null;
+  /** Reused per-IP limiter to throttle bypass-password guesses. */
+  limiter?: LoginLimiter;
+};
 
 const patchSchema = z.object({
   title: z.string().min(1).max(120).optional(),
@@ -25,6 +42,11 @@ const patchSchema = z.object({
 
 const inputSchema = z.object({
   data: z.string().max(8192),
+});
+
+const execSchema = z.object({
+  command: z.string().min(1).max(1024 * 1024),
+  timeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
 });
 
 function fileStamp(d = new Date()): string {
@@ -43,7 +65,8 @@ function contentDisposition(name: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${enc}`;
 }
 
-export function registerSessionRoutes(app: App, hub: SessionHub): void {
+export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRouteOpts = {}): void {
+  const sandboxCfg = opts.sandbox ?? null;
   app.get('/api/sessions', async () => {
     const list = hub.list();
     const [fg, cwds] = await Promise.all([
@@ -65,8 +88,51 @@ export function registerSessionRoutes(app: App, hub: SessionHub): void {
   app.post('/api/sessions', async (req, reply) => {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+    const { sandbox: wantSandboxRaw, bypass, ...createInput } = parsed.data;
+
+    // Resolve the sandbox decision. When the server has no sandbox policy at all,
+    // behavior is unchanged: every session is a normal, unconfined shell.
+    let sandbox: SandboxSettings | undefined;
+    if (sandboxCfg) {
+      const wantSandbox = wantSandboxRaw ?? sandboxCfg.defaultOn;
+      if (wantSandbox) {
+        // Confine to the requested cwd, which must live within the sandbox root.
+        const resolved = resolveSandboxDir(sandboxCfg.root, createInput.cwd);
+        if (!resolved) {
+          return reply.code(400).send({
+            error: 'cwd_outside_sandbox_root',
+            message: `working directory must be inside the sandbox root (${sandboxCfg.root})`,
+          });
+        }
+        sandbox = sandboxCfg;
+      } else {
+        // A full read-write session is privileged: it requires the separate
+        // bypass password, which agents are never given.
+        const unsHash = opts.config?.unsandboxedHash;
+        if (!unsHash) {
+          return reply.code(403).send({
+            error: 'unsandboxed_disabled',
+            message: 'unsandboxed sessions are disabled; set a bypass password with `omas passwd --bypass`',
+          });
+        }
+        const ip = (req as any).ip ?? 'unknown';
+        if (opts.limiter?.isBlocked(ip)) {
+          return reply.code(429).send({ error: 'too_many_attempts', message: 'too many bypass attempts; try again later' });
+        }
+        const ok = typeof bypass === 'string' && bypass.length > 0
+          ? await verifyPassword(unsHash, bypass)
+          : false;
+        if (!ok) {
+          opts.limiter?.recordFail(ip);
+          return reply.code(401).send({ error: 'bad_bypass', message: 'invalid bypass password' });
+        }
+        opts.limiter?.recordSuccess(ip);
+        sandbox = undefined; // explicit full-access session
+      }
+    }
+
     try {
-      const s = hub.create(parsed.data);
+      const s = hub.create({ ...createInput, sandbox });
       return reply.code(201).send(s.toJSON());
     } catch (err) {
       if (err instanceof HubError) return reply.code(err.status).send({ error: err.code, message: err.message });
@@ -97,6 +163,18 @@ export function registerSessionRoutes(app: App, hub: SessionHub): void {
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
     s.write(parsed.data.data);
     return { ok: true };
+  });
+
+  // One-shot command execution in the session's workspace (cwd), reusing the
+  // session's sandbox confinement. Powers `omas exec` for external agents.
+  app.post('/api/sessions/:id/exec', async (req: any, reply: any) => {
+    const { id } = req.params as { id: string };
+    const s = hub.get(id);
+    if (!s) return reply.code(404).send({ error: 'not_found' });
+    const parsed = execSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
+    const result = await s.exec(parsed.data.command, { timeoutMs: parsed.data.timeoutMs });
+    return reply.send(result);
   });
 
   app.patch('/api/sessions/:id', async (req, reply) => {

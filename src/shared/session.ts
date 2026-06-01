@@ -11,6 +11,8 @@ export type Session = {
   exited: boolean;
   exitCode?: number | null;
   exitSignal?: string | null;
+  /** True when the shell is confined by a bwrap sandbox (read-only FS outside cwd). */
+  sandboxed?: boolean;
   /**
    * Program name running in the foreground of the session's tty (e.g. `vim`,
    * `node`, `top`), or null when the shell itself is at its prompt. Detected by
@@ -45,4 +47,12 @@ export type CreateSessionInput = {
   rows: number;
   /** Auto-typed once the shell is up (e.g. `claude --resume <id>`). */
   initialCommand?: string;
+  /**
+   * Sandbox this session (read-only FS outside cwd). Defaults to the server's
+   * sandbox policy. Set false to request a full read-write session — which the
+   * server only grants when accompanied by a valid `bypass` password.
+   */
+  sandbox?: boolean;
+  /** Bypass password, required only when `sandbox: false` under a sandboxed server. */
+  bypass?: string;
 };

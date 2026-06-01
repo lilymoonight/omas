@@ -4,6 +4,20 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.5.0] - 2026-06-01
+
+### 新增
+
+- **会话级沙箱隔离（Linux / macOS）**：用 `omas serve --sandbox-root <dir>` 开启后，新会话默认被沙箱包裹——**整个文件系统只读，唯独该会话选定的工作目录（`cwd`）可写**，`HOME`/`TMPDIR` 指到工作目录下的 `.home`/`.tmp`（持久、可写缓存），默认仍共享主机网络（`--sandbox-no-net` 可断网）。可写目录**必须落在 `sandbox-root` 之内**，因此即便会话请求 `/` 也只会被拒绝，杜绝「全盘可写」。沙箱开关是**逐会话**属性，不影响你自己未沙箱的运维会话。两套后端按平台自动选择：**Linux 用 [bubblewrap](https://github.com/containers/bubblewrap)（`bwrap`，另挂私有 tmpfs `/tmp`）**，**macOS 用 `sandbox-exec`（Seatbelt 策略，拒绝 `/tmp` 与 `/var/folders` 写入以对齐隔离效果，同时放行终端 ioctl 以保证交互式 shell 的方向键与作业控制正常）**。`omas exec` 的一次性命令与会话同等受限。
+- **解除沙箱口令（bypass）**：要创建「全盘可写」的非沙箱会话，需校验一个**独立于登录密码**的 bypass 口令。该口令只能用 `omas passwd --bypass` 提前设置（仅存 argon2id 哈希、不接受启动参数，避免被 `ps` 看到），且**必须不同于登录密码**、**绝不下发给 agent**。未设置时，非沙箱会话一律拒绝。校验失败按 IP 限流。
+- **网页新建会话对话框**：列表页「新建会话」改为弹窗，工作目录支持**面包屑路径导航 + 点击子目录逐级进入**（顶部面包屑可点任意上级目录、内联列出子目录、点一下即选定；也可手动输入 / 粘贴路径并记忆上次目录；服务端开启沙箱时面包屑不越过 `sandbox-root`），并显示 **🛡 沙箱隔离** 勾选框（默认勾选；取消需填 bypass 口令）。新增只读列目录接口 `/api/dirs` 与运行时信息接口 `/api/runtime` 支撑该对话框。
+- **面向 agent 的远程命令 / 文件 CLI**：本地 agent 可把远程主机当算力，复用同一域名 + TLS：
+  - `omas exec <url> --cwd <工作区> -- <命令>`：在工作区目录内执行 shell 命令并取回 stdout/stderr 与**退出码**（沙箱开启时命令与会话同等受限）。
+  - `omas upload <url> <本地文件> [远程子目录] --cwd <工作区>`：上传文件（>16 MiB 自动分片）。
+  - `omas download <url> <远程相对路径> [本地路径] --cwd <工作区>`：下载文件，目录自动打包为 `.tar.gz`，`-` 表示输出到 stdout。
+  - 三者均可用 `--cwd` 临时新建会话（用完即销毁，**目录文件持久保留**）或 `-s <会话id>` 复用已有会话——「工作区」即磁盘上的真实目录，`upload → exec → download` 指向同一 `--cwd` 即共享文件。
+  - 随仓库附带 Agent Skill（`.cursor/skills/omas-remote-compute/`），教 AI agent 用上述 CLI 把远程主机当算力（含沙箱与 bypass 注意事项）。
+
 ## [1.4.0] - 2026-06-01
 
 ### 新增

@@ -12,13 +12,13 @@
   } from '../lib/notifications.js';
   import { refreshHistoryAfterSessionClose } from '../lib/history-cache.js';
   import { navigate } from '../lib/router.js';
-  import { estimateTermSize } from '../lib/term-size.js';
   import { groupSessionsByProject } from '../lib/session-group.js';
   import type { Session } from '../../shared/session.js';
   import Icon from '../components/Icon.svelte';
   import SystemPanel from '../components/SystemPanel.svelte';
+  import NewSessionDialog from '../components/NewSessionDialog.svelte';
 
-  let creating = $state(false);
+  let showNewDialog = $state(false);
   let error = $state<string | null>(null);
   let renamingId = $state<string | null>(null);
   let renameValue = $state('');
@@ -116,24 +116,9 @@
     if (!ok) error = '无法开启通知：请在浏览器中允许本站发送通知。';
   }
 
-  async function createSession() {
-    creating = true;
+  function openNewDialog() {
     error = null;
-    // Open the popup synchronously inside the user gesture so popup blockers
-    // are happy; we then redirect it after the POST returns the session id.
-    const popup = window.open('about:blank', '_blank');
-    try {
-      const s = await api.createSession({ ...estimateTermSize(), });
-      await refreshSessions();
-      const url = `${location.pathname}${location.search}#/s/${s.id}`;
-      if (popup) popup.location.href = url;
-      else navigate({ name: 'terminal', id: s.id }); // popup blocked: fall back
-    } catch (e) {
-      error = `创建失败：${e}`;
-      if (popup) popup.close();
-    } finally {
-      creating = false;
-    }
+    showNewDialog = true;
   }
 
   async function destroy(id: string, title: string) {
@@ -265,16 +250,15 @@
       <Icon name="log-out" size={16} />
       <span>退出</span>
     </button>
-    <button class="primary" onclick={createSession} disabled={creating}>
-      {#if creating}
-        <Icon name="refresh" size={14} />
-        创建中…
-      {:else}
-        <Icon name="plus" size={14} />
-        新建会话
-      {/if}
+    <button class="primary" onclick={openNewDialog}>
+      <Icon name="plus" size={14} />
+      新建会话
     </button>
   </header>
+
+  {#if showNewDialog}
+    <NewSessionDialog onClose={() => (showNewDialog = false)} />
+  {/if}
 
   {#if error}
     <p class="error"><Icon name="alert" size={14} /> {error}</p>

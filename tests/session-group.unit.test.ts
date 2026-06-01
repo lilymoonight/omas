@@ -8,7 +8,6 @@ import type { Session } from '../src/shared/session.js';
 
 function sess(partial: Partial<Session> & { id: string }): Session {
   return {
-    id: partial.id,
     title: partial.title ?? partial.id,
     shell: '/bin/zsh',
     cwd: partial.cwd ?? '/home/u',

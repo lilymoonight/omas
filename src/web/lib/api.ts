@@ -215,8 +215,17 @@ function uploadFile(id: string, file: File, opts: UploadOpts = {}): Promise<FsUp
   return file.size > CHUNK_THRESHOLD ? uploadChunked(id, file, opts) : uploadSingle(id, file, opts);
 }
 
+export type SandboxRuntime =
+  | { enabled: false }
+  | { enabled: true; root: string; net: boolean; defaultOn: boolean; bypassAvailable: boolean };
+export type RuntimeInfo = { defaultCwd: string; sandbox: SandboxRuntime };
+export type DirEntry = { name: string; path: string };
+export type DirListResp = { dir: string; parent: string | null; entries: DirEntry[] };
+
 export const api = {
   health: () => req<{ ok: boolean; uptime: number; sessions: number }>('GET', 'health'),
+  runtime: () => req<RuntimeInfo>('GET', 'runtime'),
+  listDirs: (path = '') => req<DirListResp>('GET', `dirs?path=${encodeURIComponent(path)}`),
   listSessions: () => req<Session[]>('GET', 'sessions'),
   createSession: (input: CreateSessionInput) => req<Session>('POST', 'sessions', input),
   getSession: (id: string) => req<Session>('GET', `sessions/${id}`),

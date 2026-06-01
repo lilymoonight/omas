@@ -17,14 +17,15 @@ omas（**o**h-**m**y-**a**gent-**s**hell 的缩写）是 **Agent 时代的轻量
 2. [构建](#构建)
 3. [命令参考](#命令参考)
 4. [密码与配置](#密码与配置)
-5. [安装到 PATH](#安装到-path)
-6. [注册系统服务](#注册系统服务)
-7. [Docker](#docker)
-8. [HTTP / WebSocket API](#http--websocket-api)
-9. [生产部署](#生产部署)
-10. [开发与测试](#开发与测试)
-11. [限制与已知问题](#限制与已知问题)
-12. [故障排查](#故障排查)
+5. [会话沙箱（Linux / macOS）](#会话沙箱linux--macos)
+6. [安装到 PATH](#安装到-path)
+7. [注册系统服务](#注册系统服务)
+8. [Docker](#docker)
+9. [HTTP / WebSocket API](#http--websocket-api)
+10. [生产部署](#生产部署)
+11. [开发与测试](#开发与测试)
+12. [限制与已知问题](#限制与已知问题)
+13. [故障排查](#故障排查)
 
 ---
 
@@ -100,7 +101,11 @@ ARCH=darwin-arm64 npm run build   # 默认：当前机器架构
 |------|------|
 | `omas` / `omas serve` | 启动服务（**默认命令**） |
 | `omas init` | 交互式初始化密码配置文件 |
-| `omas passwd` | 交互式修改密码 |
+| `omas passwd` | 交互式修改登录密码 / 设置解除沙箱口令（`--bypass`） |
+| `omas exec` | 在远程工作区执行命令并取回输出（给本地 agent 用） |
+| `omas upload` | 上传文件到远程工作区 |
+| `omas download` | 从远程工作区下载文件 / 目录 |
+| `omas connect` | 在本地终端像 ssh 一样连接远程会话 |
 | `omas install` | 复制二进制到 PATH |
 | `omas service install` | 注册并启动 systemd / launchd 服务 |
 | `omas service uninstall` | 卸载服务 |
@@ -130,6 +135,9 @@ omas [选项]                    # 省略 serve 时等价
 | `--password-file <path>` | | — | 从文件读密码（trim 后使用，**仅内存**） |
 | `--publish <slug=dir>` | | — | 把目录挂到 `/p/<slug>/` 作**免密公开静态站点**（可重复） |
 | `--publish-spa <slug=dir>` | | — | 同上，但未命中文件时回退 `index.html`（适合单页应用，可重复） |
+| `--sandbox-root <dir>` | | — | **开启会话沙箱**（Linux 用 bwrap / macOS 用 sandbox-exec）。会话只读整个文件系统，仅其工作目录（须在此目录内）可写。详见[会话沙箱](#会话沙箱linux--macos) |
+| `--sandbox-no-net` | | — | 沙箱会话断网（默认共享主机网络） |
+| `--sandbox-default-off` | | — | 新会话默认**不**沙箱（仍可逐个开启；解除沙箱需 bypass 口令） |
 
 **示例**
 
@@ -188,9 +196,68 @@ omas init [--config-dir <dir>] [--force]
 
 ```bash
 omas passwd [--config-dir <dir>]
+omas passwd --bypass [--config-dir <dir>]   # 设置“解除沙箱”口令
 ```
 
-已登录的浏览器会话在 cookie 过期前仍有效。
+| 选项 | 说明 |
+|------|------|
+| `--bypass` | 设置 / 更新**解除沙箱口令**（创建非沙箱会话时校验）。该口令必须**不同于登录密码**，只存哈希、不接受启动参数（避免被 `ps` 看到） |
+
+不带 `--bypass` 时修改登录密码；已登录的浏览器会话在 cookie 过期前仍有效。
+
+---
+
+### `omas exec` / `omas upload` / `omas download`（远程算力，给本地 agent 用）
+
+把远程 omas 主机当算力：本地 agent 复用同一域名 + TLS（与网页同一套鉴权），在远程「工作区」里跑命令、推代码、取结果。**工作区就是远程磁盘上的真实目录**（沙箱开启时须在 `sandbox-root` 内）；把所有命令指向同一 `--cwd`（或同一 `-s <会话id>`）即共享文件。
+
+公共选项（三条命令通用）：
+
+| 选项 | 短选项 | 说明 |
+|------|--------|------|
+| `--session <id>` | `-s` | 复用已有会话作为工作区（默认按 `--cwd` 临时新建、用完即销毁，**目录文件保留**） |
+| `--cwd <dir>` | | 临时会话的工作目录（沙箱开启时必须在 `sandbox-root` 内） |
+| `--no-sandbox` | | 创建非沙箱会话（全盘可写，需配合 `--bypass`） |
+| `--bypass <pw>` | | 解除沙箱口令（也可用环境变量 `OMAS_BYPASS`） |
+| `--password <pw>` | | 登录密码（也可用 `OMAS_PASSWORD` 或交互输入） |
+| `--insecure` | | 跳过 TLS 证书校验（自签名证书时使用） |
+
+```bash
+# 执行命令并取回输出，退出码与远程命令一致（便于脚本判断成败）
+omas exec example.com --cwd /srv/agent/job1 -- "make && ./run"
+omas exec example.com -s <会话id> -- ls -la
+omas exec ... --timeout 600000 -- <命令>        # 自定义超时（毫秒，默认 120000）
+
+# 上传本地文件到工作区（>16 MiB 自动分片）；打印写入后的相对路径
+omas upload example.com ./main.py --cwd /srv/agent/job1
+omas upload example.com ./data.zip subdir -s <会话id>
+
+# 下载文件 / 目录（目录自动打包为 .tar.gz；用 - 输出到 stdout）
+omas download example.com result.txt ./result.txt --cwd /srv/agent/job1
+omas download example.com out/ . -s <会话id>
+
+# 典型 agent 循环：同一 --cwd 即同一工作区
+omas upload host ./main.py --cwd /srv/agent/job1
+omas exec   host --cwd /srv/agent/job1 -- "python3 main.py > out.txt 2>&1"
+omas download host out.txt - --cwd /srv/agent/job1
+```
+
+> `exec` 是**无状态**的一次性进程（`sh -c <命令>`，不共享交互 shell 的 env/历史），但与会话同等受沙箱约束。需要交互式登录请用 [`omas connect`](#omas-connect像-ssh-的本地终端)。
+
+---
+
+### `omas connect`（像 ssh 的本地终端）
+
+在本地终端里直接登录远程 omas，体验类似 `ssh`，但复用现有 HTTP 鉴权 + WebSocket 终端协议，走域名已有的 TLS 反代即可。
+
+```bash
+omas connect example.com                  # 新建会话，交互输入密码
+omas connect example.com -s <会话id>      # 附加到已有会话（与网页端共享）
+omas connect example.com --list           # 列出会话后退出
+omas connect http://127.0.0.1:7681 --password dev
+```
+
+`Ctrl-]` 断开（会话保留在后台），在 shell 里 `exit` 才真正结束。
 
 ---
 
@@ -327,17 +394,24 @@ omas service uninstall [--system]
   "sites": [
     { "slug": "report", "root": "/home/me/app/dist" },
     { "slug": "app", "root": "/home/me/app/build", "spa": true }
-  ]
+  ],
+  "sandbox": { "root": "/srv/agent", "net": true, "default": true },
+  "unsandboxedHash": "$argon2id$..."
 }
 ```
 
 > `sites`：免密公开静态站点列表（挂到 `/p/<slug>/`），等价于持久化的 `--publish`。`spa: true` 对应 `--publish-spa`。命令行 `--publish*` 与此处同名 slug 时以命令行为准。
+>
+> `sandbox`：持久化的会话沙箱设置，等价于 `--sandbox-root` / `--sandbox-no-net` / `--sandbox-default-off`（命令行优先）。`root` 是可写区上限（必填以开启沙箱），`net` 默认 `true`，`default` 表示新会话是否默认沙箱（默认 `true`）。详见[会话沙箱](#会话沙箱linux--macos)。
+>
+> `unsandboxedHash`：解除沙箱口令的 argon2id 哈希，**只能用 `omas passwd --bypass` 设置**，请勿手填。未设置时禁止创建非沙箱会话。
 
 ### 环境变量
 
 | 变量 | 作用 |
 |------|------|
-| `OMAS_PASSWORD` | serve 时使用的一次性密码（内存） |
+| `OMAS_PASSWORD` | serve 时使用的一次性密码（内存）；`connect`/`exec`/`upload`/`download` 的登录密码 |
+| `OMAS_BYPASS` | `exec`/`upload`/`download` 创建非沙箱会话时的解除沙箱口令 |
 | `XDG_CONFIG_HOME` | 改变默认配置根目录 |
 | `LOG_LEVEL` | `pino` 日志级别（`info`、`debug` 等） |
 | `NODE_ENV` | `production` 时使用 JSON 日志 |
@@ -348,6 +422,77 @@ omas service uninstall [--system]
 - 名称：`omas_sid`
 - 属性：`HttpOnly`、`SameSite=Lax`、HTTPS 下 `Secure`
 - 登录失败限流：每 IP 5 次 / 5 分钟
+
+---
+
+## 会话沙箱（Linux / macOS）
+
+> **用途**：把会话（以及里面跑的 agent）限制在一个目录内可写、其余只读，避免 agent 误改 / 误删主机上无关文件。
+
+### 原理
+
+开启后，每个沙箱会话用平台对应的后端包裹 shell，效果一致：
+
+- **整个文件系统只读**，**唯独该会话选定的工作目录 `cwd` 可写**；
+- `cwd` **必须落在配置的 `sandbox-root` 之内**——这是「可写天花板」，即使请求 `/` 或 `sandbox-root` 之外的路径也会被拒绝，从根本上杜绝「全盘可写」；
+- `HOME`/`TMPDIR` 指到 `cwd/.home`、`cwd/.tmp`（持久、可写，工具的缓存 / 临时文件不写到真实 `$HOME` 或全局 `/tmp`）；
+- 默认**共享主机网络**，`--sandbox-no-net` 可断网；
+- 沙箱进程随 omas 退出而结束。
+
+两套后端按平台自动选择：
+
+| 平台 | 后端 | 关键差异 |
+|------|------|----------|
+| **Linux** | [bubblewrap](https://github.com/containers/bubblewrap)（`bwrap`） | `--ro-bind / /` 重建只读根，可写目录 `--bind` 回来；另挂**私有 tmpfs `/tmp`**、新建 `/dev` `/proc`；`--die-with-parent` |
+| **macOS** | `sandbox-exec`（Seatbelt） | `(deny default)(allow file-read*)` + 仅放开 `cwd` 与 `/dev` 的写；**拒绝 `/tmp` 与 `/var/folders` 写入**以对齐隔离效果（故把 `TMPDIR` 指到 `cwd/.tmp`）。路径按 `realpath` 规范化（Seatbelt 匹配真实路径，如 `/tmp`→`/private/tmp`） |
+
+沙箱是**逐会话**属性：你自己未沙箱的运维会话不受影响；`exec` 一次性命令与所在会话**同等受限**。
+
+### 前置条件
+
+- **Linux**：内核开启**非特权用户命名空间**（unprivileged userns），且装有 `bwrap`（如 `apt install bubblewrap`）。
+- **macOS**：自带 `/usr/bin/sandbox-exec`，无需安装。
+
+> macOS 的 `sandbox-exec` 被 Apple 官方标记为 deprecated（但十余年仍在系统中、Chrome / Bazel / Nix 等仍在用）；如对长期稳定性敏感，生产隔离建议用 Linux + bwrap。
+
+未满足时（如缺 `bwrap` 或在不支持的平台上），带 `--sandbox-root` 启动会**立即报错退出**（fail-fast），不会以为开了沙箱实际没开。
+
+### 启用
+
+```bash
+# 1) 设置“解除沙箱”口令（必须不同于登录密码；只存哈希）
+omas passwd --bypass
+
+# 2) 开启沙箱，限定可写区在 /srv/agent 之内
+omas serve --sandbox-root /srv/agent
+
+# 可选：默认不沙箱 / 断网
+omas serve --sandbox-root /srv/agent --sandbox-default-off
+omas serve --sandbox-root /srv/agent --sandbox-no-net
+```
+
+> 建议把 `--cwd`（新会话默认目录）与 `defaultCwd` 设在 `sandbox-root` 之内，否则默认沙箱会话会因 `cwd` 越界而创建失败。
+
+### 解除沙箱（bypass）
+
+要创建「全盘可写」的非沙箱会话，需校验**独立于登录密码**的 bypass 口令：
+
+- 只能用 `omas passwd --bypass` **提前**设置（仅存 argon2id 哈希、不接受启动参数，避免 `ps` 泄露），且**必须不同于登录密码**；
+- 未设置 `unsandboxedHash` 时，**一律禁止**非沙箱会话；
+- 校验失败按 IP 限流（5 次 / 5 分钟）；
+- **绝不要把 bypass 口令给 agent**——agent 只该用沙箱会话。
+
+网页端「新建会话」弹窗中，沙箱默认勾选；取消勾选会要求填写 bypass 口令。CLI 用 `--no-sandbox --bypass <pw>`（或 `OMAS_BYPASS`）。
+
+### 与 agent 配合
+
+配合 [`omas exec` / `upload` / `download`](#omas-exec--omas-upload--omas-download远程算力给本地-agent-用)：本地 agent 把代码 `upload` 到 `sandbox-root` 下的工作区、`exec` 构建 / 运行、`download` 取回产物，全程被限制在该工作区内可写。
+
+### 限制
+
+- bwrap argv 与 Seatbelt profile 的拼装是纯函数并有单元测试（任意平台可验证）。
+- macOS 后端是 syscall 级策略（MAC），模型上不如 bwrap 的命名空间彻底；且 `sandbox-exec` 官方标记 deprecated（短期不会移除）。
+- 写工作目录之外（含硬编码 `/tmp` 的程序）会被拒绝——这是预期的隔离行为；让工具走 `TMPDIR` 即可。
 
 ---
 
@@ -418,8 +563,11 @@ Content-Type: application/json
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/runtime` | 运行时信息：`{ defaultCwd, sandbox }`（供网页新建会话弹窗使用） |
+| GET | `/api/dirs?path=<路径>` | 只读列出子目录（目录补全用；按末段做前缀过滤） |
 | GET | `/api/sessions` | 列表 |
-| POST | `/api/sessions` | 创建 `{ "cols", "rows", "title?", "cwd?", "shell?", "initialCommand?" }`（`cwd` 即「在指定目录新建会话」） |
+| POST | `/api/sessions` | 创建 `{ "cols", "rows", "title?", "cwd?", "shell?", "initialCommand?", "sandbox?", "bypass?" }`。`sandbox` 省略时按服务端策略；`sandbox:false` 需附 `bypass` 口令；沙箱开启时 `cwd` 须在 `sandbox-root` 内 |
+| POST | `/api/sessions/:id/exec` | 在会话工作区一次性执行命令 `{ command, timeoutMs? }` → `{ stdout, stderr, exitCode, signal, timedOut }`（沙箱会话内同等受限） |
 | PATCH | `/api/sessions/:id` | 重命名 |
 | DELETE | `/api/sessions/:id` | 销毁 |
 | GET | `/api/sessions/:id/export?format=txt\|html` | 导出完整终端内容（屏幕 + scrollback，由服务端无头镜像序列化） |

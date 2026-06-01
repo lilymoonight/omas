@@ -38,6 +38,8 @@
 - **空闲主动通知** — Agent 从「工作中」转「空闲」时，后台标签页弹系统通知（点击打开该会话），标题与 favicon 显示待处理角标，回到标签即清除。
 - **会话按项目分组** — 按实时工作目录聚合，oh-my-zsh 风格彩色路径面包屑，分组可折叠、状态持久化；多 repo / 多 Agent 一眼分清。
 - **实时工作目录** — 卡片显示会话实时 cwd（跟随 `cd`）。
+- **远程算力 CLI** — `omas exec / upload / download` 让**本地 Agent** 把远程主机当算力：推代码、跑命令取输出（退出码一致）、拉产物，全程复用同一域名 + TLS。`omas connect` 还能像 ssh 一样在本地终端登录远程会话。
+- **会话沙箱（Linux / macOS）** — `--sandbox-root` 把会话（及其中的 Agent）限制为**只读整盘、仅工作目录可写**,可写区强制落在 `sandbox-root` 内（Linux 用 bwrap、macOS 用 sandbox-exec，自动选择）；解除沙箱需独立 bypass 口令（`omas passwd --bypass`），绝不下发给 Agent。
 
 ### 文件与改动 review
 

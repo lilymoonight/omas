@@ -8,6 +8,7 @@ import { logger } from './logger.js';
 import { SessionHub } from './pty/hub.js';
 import { ensureReady as ensurePtyBackendReady } from './pty/backend.js';
 import { registerSessionRoutes } from './routes/sessions.js';
+import { registerDirRoutes } from './routes/dirs.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerGitRoutes } from './routes/git-status.js';
 import { registerGitFileRoutes } from './routes/git-file.js';
@@ -26,6 +27,7 @@ import { UploadStore } from './pty/upload-store.js';
 import { parsePublishArgs, type SiteSpec } from './sites/util.js';
 import { SiteManager } from './sites/manager.js';
 import { registerSiteRoutes } from './sites/routes.js';
+import { sandboxAvailable, type SandboxSettings } from './pty/sandbox.js';
 
 export type ServerConfig = {
   host: string;
@@ -43,6 +45,12 @@ export type ServerConfig = {
   publish?: string[];
   /** `slug=dir` entries from --publish-spa (no-auth SPA sites). */
   publishSpa?: string[];
+  /** Writable ceiling for sandboxed sessions (enables sandboxing). CLI overrides config. */
+  sandboxRoot?: string;
+  /** Share host network inside the sandbox (default true). */
+  sandboxNet?: boolean;
+  /** New sessions are sandboxed unless opted out (default true). */
+  sandboxDefault?: boolean;
 };
 
 export async function createServer(config: ServerConfig) {
@@ -71,6 +79,40 @@ export async function createServer(config: ServerConfig) {
   });
   logger.info({ defaultCwd }, 'new sessions default cwd');
 
+  // Resolve the sandbox policy: CLI flags win over persisted config. Presence of
+  // a root is what turns sandboxing on. We fail fast here (rather than at first
+  // session) so a misconfigured host is obvious at boot.
+  let sandbox: SandboxSettings | null = null;
+  {
+    const root = config.sandboxRoot ?? cfg.sandbox?.root;
+    if (root) {
+      const absRoot = path.resolve(root);
+      if (!fs.existsSync(absRoot) || !fs.statSync(absRoot).isDirectory()) {
+        throw new Error(`sandbox root does not exist or is not a directory: ${absRoot}`);
+      }
+      if (!sandboxAvailable()) {
+        throw new Error(
+          process.platform === 'linux'
+            ? 'sandboxing is enabled but bubblewrap (bwrap) is unavailable. '
+              + 'It requires unprivileged user namespaces. Install bwrap '
+              + '(e.g. `apt install bubblewrap`) or remove the sandbox setting.'
+            : process.platform === 'darwin'
+              ? 'sandboxing is enabled but sandbox-exec is not on PATH (expected at /usr/bin/sandbox-exec).'
+              : `sandboxing is not supported on this platform (${process.platform}); use Linux (bwrap) or macOS (sandbox-exec).`,
+        );
+      }
+      sandbox = {
+        root: absRoot,
+        net: config.sandboxNet ?? cfg.sandbox?.net ?? true,
+        defaultOn: config.sandboxDefault ?? cfg.sandbox?.default ?? true,
+      };
+      logger.info(
+        { root: absRoot, net: sandbox.net, defaultOn: sandbox.defaultOn, bypass: !!cfg.unsandboxedHash },
+        'sandbox enabled',
+      );
+    }
+  }
+
   const app = Fastify({ loggerInstance: logger, disableRequestLogging: true, trustProxy: true });
   await app.register(fastifyCookie, { secret: cfg.cookieSecret });
 
@@ -94,10 +136,27 @@ export async function createServer(config: ServerConfig) {
     defaultCwd,
   }));
 
+  // Authed runtime info for the web UI's new-session dialog: where to default the
+  // directory picker, and whether/how sandboxing applies.
+  app.get('/api/runtime', async () => ({
+    defaultCwd,
+    sandbox: sandbox
+      ? {
+          enabled: true,
+          root: sandbox.root,
+          net: sandbox.net,
+          defaultOn: sandbox.defaultOn,
+          // Whether unsandboxed sessions are even possible (bypass password set).
+          bypassAvailable: !!cfg!.unsandboxedHash,
+        }
+      : { enabled: false },
+  }));
+
   const uploads = new UploadStore();
   const shares = new ShareStore();
 
-  registerSessionRoutes(app, hub);
+  registerSessionRoutes(app, hub, { sandbox, config: cfg, limiter });
+  registerDirRoutes(app);
   registerSystemRoutes(app);
   registerGitRoutes(app, hub);
   registerGitFileRoutes(app, hub);
