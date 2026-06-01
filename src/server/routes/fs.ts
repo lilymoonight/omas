@@ -1,5 +1,7 @@
+import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { SessionHub } from '../pty/hub.js';
 import type { UploadStore } from '../pty/upload-store.js';
@@ -54,6 +56,14 @@ const uploadInitSchema = z.object({
   dir: z.string().max(2048).optional(),
   size: z.number().int().min(0).max(MAX_UPLOAD_BYTES),
 });
+
+/** RFC 6266 / 5987 Content-Disposition with a UTF-8 filename* fallback. */
+function contentDisposition(name: string): string {
+  // ASCII fallback: strip control chars and quotes that would break the header.
+  const ascii = name.replace(/["\\\r\n]/g, '_').replace(/[^\x20-\x7e]/g, '_') || 'download';
+  const enc = encodeURIComponent(name).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${enc}`;
+}
 
 function safeBasename(name: string): string | null {
   // basename() strips any path components the client may have smuggled in.
@@ -300,6 +310,59 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
       if (err?.code === 'EACCES') return reply.code(403).send({ error: 'permission_denied' });
       return reply.code(500).send({ error: 'read_failed', message: String(err?.message ?? err) });
     }
+  });
+
+  // Download a single file (streamed verbatim) or a directory (streamed as a
+  // gzip-compressed tar built by the system `tar`, so we add no archive deps and
+  // keep memory flat regardless of size). Path traversal is bounded by cwd.
+  app.get('/api/sessions/:id/fs/download', async (req: any, reply: any) => {
+    const session = hub.get(req.params.id);
+    if (!session) return reply.code(404).send({ error: 'session_not_found' });
+
+    const cwd = await sessionCwd(session);
+    if (!cwd) return reply.code(404).send({ error: 'no_cwd' });
+
+    const relPath = String(req.query?.path ?? '');
+    const resolved = resolveUnderCwd(cwd, relPath);
+    if ('error' in resolved) return reply.code(400).send({ error: resolved.error });
+
+    let stat: fs.Stats;
+    try {
+      stat = await fsp.stat(resolved.abs);
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return reply.code(404).send({ error: 'not_found' });
+      if (err?.code === 'EACCES') return reply.code(403).send({ error: 'permission_denied' });
+      return reply.code(500).send({ error: 'stat_failed', message: String(err?.message ?? err) });
+    }
+
+    if (stat.isDirectory()) {
+      const baseName = path.basename(resolved.abs) || 'root';
+      const parent = path.dirname(resolved.abs);
+      const child = spawn('tar', ['-czf', '-', '-C', parent, baseName], {
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      let failed = false;
+      child.on('error', (err) => {
+        failed = true;
+        if (!reply.sent) reply.code(500).send({ error: 'tar_unavailable', message: String(err?.message ?? err) });
+        else child.kill('SIGKILL');
+      });
+      // Give `tar` a tick to fail fast (e.g. not installed) before we commit headers.
+      await new Promise((r) => setImmediate(r));
+      if (failed) return reply;
+      reply.header('content-type', 'application/gzip');
+      reply.header('content-disposition', contentDisposition(`${baseName}.tar.gz`));
+      reply.header('cache-control', 'no-store');
+      return reply.send(child.stdout);
+    }
+
+    if (!stat.isFile()) return reply.code(400).send({ error: 'not_a_file' });
+
+    reply.header('content-type', 'application/octet-stream');
+    reply.header('content-length', String(stat.size));
+    reply.header('content-disposition', contentDisposition(path.basename(resolved.abs)));
+    reply.header('cache-control', 'no-store');
+    return reply.send(fs.createReadStream(resolved.abs));
   });
 
   app.put('/api/sessions/:id/fs/write', async (req: any, reply: any) => {

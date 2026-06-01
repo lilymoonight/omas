@@ -10,6 +10,7 @@ import { readable } from 'svelte/store';
 export type Route =
   | { name: 'list' }
   | { name: 'terminal'; id: string }
+  | { name: 'shared'; token: string }
   | { name: 'history' }
   | { name: 'publish' }
   | { name: 'login' };
@@ -20,6 +21,8 @@ function parse(hash: string): Route {
   if (h === '/login') return { name: 'login' };
   if (h === '/history') return { name: 'history' };
   if (h === '/publish') return { name: 'publish' };
+  const shared = /^\/shared\/([A-Za-z0-9_-]+)$/.exec(h);
+  if (shared) return { name: 'shared', token: shared[1]! };
   const m = /^\/s\/([A-Za-z0-9_-]+)$/.exec(h);
   if (m) return { name: 'terminal', id: m[1]! };
   return { name: 'list' };

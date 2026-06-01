@@ -29,7 +29,20 @@ export class SessionSocket {
   // lastSeq lives only for the lifetime of this SessionSocket. A new XTerm
   // mount means a blank screen, which means we want the server to dump the
   // full scrollback again — don't persist seq across mounts or refreshes.
-  constructor(private readonly sessionId: string) {}
+  //
+  // When `shareToken` is set, we attach over the public read-only share endpoint
+  // (the token is the capability) instead of the cookie-authed session endpoint.
+  constructor(
+    private readonly sessionId: string,
+    private readonly opts: { shareToken?: string } = {},
+  ) {}
+
+  private attachPath(): string {
+    if (this.opts.shareToken) {
+      return `shared/${encodeURIComponent(this.opts.shareToken)}/attach?since=${this.lastSeq}`;
+    }
+    return `sessions/${this.sessionId}/attach?since=${this.lastSeq}`;
+  }
 
   on<K extends keyof WsEvents>(event: K, handler: WsEvents[K]): () => void {
     this.listeners[event].add(handler);
@@ -46,7 +59,7 @@ export class SessionSocket {
   connect(): void {
     if (this.closed) return;
     this.emit('status', 'connecting');
-    const url = wsUrl(`sessions/${this.sessionId}/attach?since=${this.lastSeq}`);
+    const url = wsUrl(this.attachPath());
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';
     this.ws = ws;

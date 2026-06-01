@@ -40,6 +40,14 @@ export type PtyEvents = {
   clients: (count: number) => void;
 };
 
+function htmlEscape(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 function pickShell(explicit?: string): string {
   if (explicit) return explicit;
   if (process.env.SHELL) return process.env.SHELL;
@@ -212,6 +220,66 @@ export class PtySession extends EventEmitter {
     // an empty screen is cheap to re-serialize anyway.
     if (s !== '') this.snapshotCache = result;
     return result;
+  }
+
+  /** Snapshot including the full scrollback — used for read-only share viewers
+   *  (who join mid-session and want history) and never cached. */
+  fullSnapshot(): { bytes: Buffer; cols: number; rows: number } {
+    this.flushHeadless();
+    let s = '';
+    try {
+      s = this.serializer.serialize({ scrollback: HEADLESS_SCROLLBACK });
+    } catch {
+      /* fall back to empty */
+    }
+    return { bytes: Buffer.from(s, 'utf8'), cols: this.cols, rows: this.rows };
+  }
+
+  /** Plain-text dump of the active buffer including scrollback (for export). */
+  serializeText(): string {
+    this.flushHeadless();
+    const buf = (this.headless as any).buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      lines.push(line ? line.translateToString(true) : '');
+    }
+    while (lines.length && lines[lines.length - 1] === '') lines.pop();
+    return lines.join('\n') + '\n';
+  }
+
+  /** Color-preserving HTML dump including scrollback (for export). Wraps the
+   *  addon's clipboard fragment in a full, UTF-8 document with the terminal
+   *  block centered on the page. */
+  serializeHtml(): string {
+    this.flushHeadless();
+    let frag = '';
+    try {
+      frag = this.serializer.serializeAsHTML({ scrollback: HEADLESS_SCROLLBACK, includeGlobalBackground: true });
+    } catch {
+      return '';
+    }
+    // serializeAsHTML returns a clipboard fragment:
+    //   <html><body><!--StartFragment-->…<!--EndFragment--></body></html>
+    const m = frag.match(/<!--StartFragment-->([\s\S]*?)<!--EndFragment-->/);
+    const inner = m ? m[1] : frag;
+    const title = htmlEscape(this.title);
+    return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<style>
+  html, body { margin: 0; }
+  body { background: #1e1e1e; display: flex; justify-content: center; padding: 24px; box-sizing: border-box; }
+  .omas-term { display: inline-block; }
+  .omas-term pre { margin: 0; }
+</style>
+</head>
+<body><div class="omas-term">${inner}</div></body>
+</html>
+`;
   }
 
   setTitle(title: string): void {

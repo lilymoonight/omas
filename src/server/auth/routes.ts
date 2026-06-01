@@ -94,6 +94,9 @@ export function makeAuthGuard(config: Config, store: CookieSessionStore) {
     const url: string = req.url ?? '';
     if (!url.startsWith('/api/')) return;
     if (url.startsWith('/api/auth/') || url.startsWith('/api/health')) return;
+    // Public read-only share metadata (the token is the capability). The matching
+    // share WS attach is authorized separately in the upgrade handler.
+    if (url.startsWith('/api/shared/')) return;
     if (!isAuthed(req, store)) {
       reply.code(401).send({ error: 'unauthenticated' });
     }

@@ -419,9 +419,26 @@ Content-Type: application/json
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/sessions` | 列表 |
-| POST | `/api/sessions` | 创建 `{ "cols", "rows", "name?" }` |
+| POST | `/api/sessions` | 创建 `{ "cols", "rows", "title?", "cwd?", "shell?", "initialCommand?" }`（`cwd` 即「在指定目录新建会话」） |
 | PATCH | `/api/sessions/:id` | 重命名 |
 | DELETE | `/api/sessions/:id` | 销毁 |
+| GET | `/api/sessions/:id/export?format=txt\|html` | 导出完整终端内容（屏幕 + scrollback，由服务端无头镜像序列化） |
+
+### 文件下载
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/sessions/:id/fs/download?path=<相对路径>` | 文件按原字节下载；目录用系统 `tar` 现打成 `.tar.gz` 流式下载。受 cwd 越界防护 |
+
+### 只读分享
+
+| 方法 | 路径 | 认证 | 说明 |
+|------|------|------|------|
+| POST | `/api/sessions/:id/share` | 需登录 | 生成（或返回已有）只读 token：`{ ok, token }`。分享链接为 `#/shared/<token>` |
+| GET | `/api/sessions/:id/share` | 需登录 | 查询当前 token：`{ token }`（无则 `null`） |
+| DELETE | `/api/sessions/:id/share` | 需登录 | 撤销 token |
+| GET | `/api/shared/:token` | **免密** | 观看页元信息：`{ ok, title, cols, rows }`；不泄露会话 id |
+| WS | `/api/shared/:token/attach?since=<seq>` | **token 即凭据** | 只读 WebSocket：只收输出，服务端忽略输入 / resize / 标题。token 仅存内存，重启失效 |
 
 ### 公开站点
 

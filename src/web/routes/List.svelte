@@ -245,6 +245,14 @@
         <Icon name="monitor" size={16} />
       {/if}
     </button>
+    <button
+      class="ghost icon-only"
+      title="命令面板（⌘/Ctrl + K）"
+      aria-label="打开命令面板"
+      onclick={() => window.dispatchEvent(new Event('omas:command-palette'))}
+    >
+      <Icon name="command" size={16} />
+    </button>
     <button class="ghost" title="管理免密公开站点" onclick={() => navigate({ name: 'publish' })}>
       <Icon name="globe" size={16} />
       <span>发布</span>

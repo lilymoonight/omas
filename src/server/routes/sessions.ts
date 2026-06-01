@@ -27,6 +27,22 @@ const inputSchema = z.object({
   data: z.string().max(8192),
 });
 
+function fileStamp(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`;
+}
+
+function safeLabel(label: string): string {
+  const cleaned = label.trim().replace(/[\/\\:*?"<>|\x00-\x1f]+/g, '').replace(/\s+/g, '-').slice(0, 60);
+  return cleaned || 'session';
+}
+
+function contentDisposition(name: string): string {
+  const ascii = name.replace(/["\\\r\n]/g, '_').replace(/[^\x20-\x7e]/g, '_') || 'download';
+  const enc = encodeURIComponent(name).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${enc}`;
+}
+
 export function registerSessionRoutes(app: App, hub: SessionHub): void {
   app.get('/api/sessions', async () => {
     const list = hub.list();
@@ -97,5 +113,23 @@ export function registerSessionRoutes(app: App, hub: SessionHub): void {
     const { id } = req.params as { id: string };
     if (!hub.destroy(id)) return reply.code(404).send({ error: 'not_found' });
     return { ok: true };
+  });
+
+  // Export the full terminal contents (screen + scrollback) from the headless
+  // mirror, so it captures history rather than only the client's current screen.
+  app.get('/api/sessions/:id/export', async (req: any, reply: any) => {
+    const { id } = req.params as { id: string };
+    const s = hub.get(id);
+    if (!s) return reply.code(404).send({ error: 'not_found' });
+    const format = req.query?.format === 'html' ? 'html' : 'txt';
+    const name = `${safeLabel(s.title)}_${fileStamp()}.${format}`;
+    reply.header('content-disposition', contentDisposition(name));
+    reply.header('cache-control', 'no-store');
+    if (format === 'html') {
+      reply.header('content-type', 'text/html; charset=utf-8');
+      return reply.send(s.serializeHtml());
+    }
+    reply.header('content-type', 'text/plain; charset=utf-8');
+    return reply.send(s.serializeText());
   });
 }

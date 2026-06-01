@@ -6,8 +6,10 @@
   import { WebglAddon } from '@xterm/addon-webgl';
   import { ClipboardAddon } from '@xterm/addon-clipboard';
   import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
+  import { SerializeAddon } from '@xterm/addon-serialize';
   import Icon from './Icon.svelte';
   import { SessionSocket } from '../lib/ws.js';
+  import { downloadBlob, fileStamp, safeFileLabel } from '../lib/download.js';
   import { canSyncTermSize, type AttachPhase } from '../lib/attach-sync.js';
   import { TERM_FONT_SIZE, TERM_LINE_HEIGHT } from '../lib/term-layout.js';
   import {
@@ -79,19 +81,50 @@
 
   interface Props {
     sessionId: string;
+    /** When set, attach over the read-only share token instead of the session id. */
+    shareToken?: string;
+    title?: string;
     onTitle?: (title: string) => void;
     onClientCount?: (n: number) => void;
     onExit?: (info: { code: number | null; signal: string | null }) => void;
     onStatus?: (status: 'connecting' | 'open' | 'closed') => void;
+    onRecordingChange?: (recording: boolean) => void;
+    /** Click handler for file-path-looking tokens in the output (disabled for share viewers). */
+    onOpenPath?: (raw: string) => void;
   }
-  const { sessionId, onTitle, onClientCount, onExit, onStatus }: Props = $props();
+  const {
+    sessionId,
+    shareToken,
+    title = '终端',
+    onTitle,
+    onClientCount,
+    onExit,
+    onStatus,
+    onRecordingChange,
+    onOpenPath,
+  }: Props = $props();
+
+  // Path-like tokens: anything with a slash, or a bare name with a file
+  // extension, optionally followed by a :line[:col] suffix (compiler/grep style).
+  const PATH_RE =
+    /(?:(?:~\/|\.{1,2}\/|\/)?[\w.+@-]+(?:\/[\w.+@-]+)+|[\w.+@-]+\.[A-Za-z][A-Za-z0-9]{0,9})(?::\d+(?::\d+)?)?/g;
 
   let host: HTMLDivElement;
   let term: Terminal;
   let unsubTheme: (() => void) | undefined;
   let fit: FitAddon;
   let search: SearchAddon;
+  let serialize: SerializeAddon;
   let socket: SessionSocket;
+
+  // asciinema recording: capture decoded PTY output with relative timestamps,
+  // seeded with a snapshot of the current screen so playback starts in context.
+  let recording = false;
+  let recStart = 0;
+  let recEvents: Array<[number, 'o', string]> = [];
+  let recDecoder: TextDecoder | null = null;
+  let recCols = 80;
+  let recRows = 24;
 
   // Scrollback search (Cmd/Ctrl+F). Highlights matches and lets the user step
   // through them while an agent's long output sits in scrollback.
@@ -128,6 +161,10 @@
   let attachPhase: AttachPhase = 'connecting';
 
   function canSyncSize(): boolean {
+    // A read-only viewer must never resize/reflow: it keeps the session's native
+    // cols×rows so the layout matches what the owner sees (no fitting to the
+    // viewer's own window, which would rewrap lines and break TUI alignment).
+    if (shareToken) return false;
     return canSyncTermSize(attachPhase);
   }
 
@@ -248,6 +285,97 @@
     });
   }
 
+  function exportBaseName(): string {
+    return `${safeFileLabel(title)}_${fileStamp()}`;
+  }
+
+  function recordChunk(bytes: Uint8Array): void {
+    if (!recDecoder) return;
+    const t = (performance.now() - recStart) / 1000;
+    const text = recDecoder.decode(bytes, { stream: true });
+    if (text) recEvents.push([t, 'o', text]);
+  }
+
+  export function isRecording(): boolean {
+    return recording;
+  }
+
+  /** Begin an asciinema (cast v2) recording, seeded with the current screen. */
+  export function startRecording(): void {
+    if (recording || !term) return;
+    recording = true;
+    recStart = performance.now();
+    recCols = term.cols;
+    recRows = term.rows;
+    recDecoder = new TextDecoder('utf-8');
+    recEvents = [];
+    // Seed with a snapshot so the cast opens on the current screen, not a blank one.
+    try {
+      const snap = serialize?.serialize();
+      if (snap) recEvents.push([0, 'o', snap]);
+    } catch { /* ignore */ }
+    onRecordingChange?.(true);
+  }
+
+  export function stopRecording(): void {
+    if (!recording) return;
+    recording = false;
+    onRecordingChange?.(false);
+    // Flush any pending multibyte tail from the streaming decoder.
+    const tail = recDecoder?.decode();
+    if (tail) recEvents.push([(performance.now() - recStart) / 1000, 'o', tail]);
+    recDecoder = null;
+    const header = {
+      version: 2,
+      width: recCols,
+      height: recRows,
+      timestamp: Math.floor(Date.now() / 1000),
+      title,
+      env: { TERM: 'xterm-256color' },
+    };
+    const lines = [JSON.stringify(header), ...recEvents.map((e) => JSON.stringify(e))];
+    recEvents = [];
+    downloadBlob(`${exportBaseName()}.cast`, new Blob([lines.join('\n') + '\n'], { type: 'application/x-asciicast' }));
+  }
+
+  export function toggleRecording(): void {
+    if (recording) stopRecording();
+    else startRecording();
+  }
+
+  /**
+   * Register a link provider that turns file-path-looking tokens into clickable
+   * links. We only handle the single (unwrapped) buffer line, mapping string
+   * indices straight to columns — exact for ASCII paths, which is the common case.
+   */
+  function registerPathLinks(): void {
+    term.registerLinkProvider({
+      provideLinks(y, callback) {
+        const line = term.buffer.active.getLine(y - 1);
+        if (!line) return callback(undefined);
+        const text = line.translateToString(false);
+        const links = [] as Array<{
+          range: { start: { x: number; y: number }; end: { x: number; y: number } };
+          text: string;
+          activate: (e: MouseEvent, t: string) => void;
+        }>;
+        PATH_RE.lastIndex = 0;
+        let m: RegExpExecArray | null;
+        while ((m = PATH_RE.exec(text))) {
+          const matched = m[0];
+          if (/^https?:\/\//i.test(matched)) continue; // urls handled by WebLinksAddon
+          const startX = m.index;
+          links.push({
+            range: { start: { x: startX + 1, y }, end: { x: startX + matched.length, y } },
+            text: matched,
+            activate: (_e, t) => onOpenPath?.(t),
+          });
+        }
+        callback(links.length ? links : undefined);
+      },
+    });
+  }
+
   function searchOptions(): ISearchOptions {
     return {
       caseSensitive: searchCase,
@@ -334,9 +462,12 @@
     fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
+    if (onOpenPath) registerPathLinks();
     term.loadAddon(new ClipboardAddon());
     search = new SearchAddon();
     term.loadAddon(search);
+    serialize = new SerializeAddon();
+    term.loadAddon(serialize);
     search.onDidChangeResults(({ resultIndex, resultCount }) => {
       matchTotal = resultCount;
       matchIndex = resultCount > 0 ? resultIndex + 1 : 0;
@@ -352,7 +483,7 @@
 
     writeBatch = createTermWriteBatch((data, cb) => term.write(data, cb));
 
-    socket = new SessionSocket(sessionId);
+    socket = new SessionSocket(sessionId, shareToken ? { shareToken } : {});
     socket.on('status', (s) => onStatus?.(s));
     socket.on('hello', (msg) => {
       if (msg.truncated) {
@@ -376,6 +507,7 @@
       onClientCount?.(msg.clientCount);
     });
     socket.on('data', (bytes) => {
+      if (recording) recordChunk(bytes);
       const onDone = () => {
         if (pendingScrollBottom) {
           finishRestoreScroll();
@@ -398,15 +530,18 @@
     socket.on('clients', (c) => onClientCount?.(c));
     socket.on('exit', (info) => onExit?.(info));
 
-    term.onData((data) => socket.send({ type: 'input', data }));
-    term.onResize(({ cols, rows }) => {
-      if (!canSyncSize() || suppressResizeNotify) return;
-      socket.send({ type: 'resize', cols, rows });
-    });
-    term.onTitleChange((t) => {
-      // The shell can set its own title via OSC 0; mirror it to the server for the list view.
-      socket.send({ type: 'title', title: t });
-    });
+    // A read-only viewer never drives the PTY: no input, no resize, no title push.
+    if (!shareToken) {
+      term.onData((data) => socket.send({ type: 'input', data }));
+      term.onResize(({ cols, rows }) => {
+        if (!canSyncSize() || suppressResizeNotify) return;
+        socket.send({ type: 'resize', cols, rows });
+      });
+      term.onTitleChange((t) => {
+        // The shell can set its own title via OSC 0; mirror it to the server for the list view.
+        socket.send({ type: 'title', title: t });
+      });
+    }
 
     resizeObserver = new ResizeObserver(() => {
       if (!canSyncSize()) return;

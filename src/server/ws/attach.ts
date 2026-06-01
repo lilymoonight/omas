@@ -13,7 +13,13 @@ function sendJson(ws: WebSocket, msg: ServerMessage): void {
   ws.send(JSON.stringify(msg));
 }
 
-export function attachClient(ws: WebSocket, session: PtySession, since: number): void {
+export function attachClient(
+  ws: WebSocket,
+  session: PtySession,
+  since: number,
+  opts: { readOnly?: boolean } = {},
+): void {
+  const readOnly = opts.readOnly ?? false;
   const clientTag = session.attachClient();
   let lastAckSeq = 0;
   let bytesSinceAck = 0;
@@ -31,7 +37,7 @@ export function attachClient(ws: WebSocket, session: PtySession, since: number):
   //     escapes are baked into the raw stream.
   let initialBytes: Buffer;
   let truncated: boolean;
-  if (since > 0) {
+  if (since > 0 && !readOnly) {
     const dump = session.ring.since(since);
     if (!dump.truncated) {
       initialBytes = dump.bytes;
@@ -44,7 +50,10 @@ export function attachClient(ws: WebSocket, session: PtySession, since: number):
       lastAckSeq = session.ring.currentSeq;
     }
   } else {
-    const snap = session.serializeSnapshot();
+    // Read-only viewers join mid-session, so give them the full scrollback to
+    // browse; interactive clients get just the live screen (scrollback omitted
+    // to avoid the viewport sticking to ancient history on reconnect).
+    const snap = readOnly ? session.fullSnapshot() : session.serializeSnapshot();
     initialBytes = snap.bytes;
     truncated = true;
     lastAckSeq = session.ring.currentSeq;
@@ -102,6 +111,8 @@ export function attachClient(ws: WebSocket, session: PtySession, since: number):
 
   ws.on('message', (raw: RawData, isBinary: boolean) => {
     if (isBinary) {
+      // Read-only viewers must never feed the PTY.
+      if (readOnly) return;
       // Raw bytes from client (e.g. paste of arbitrary binary).
       const buf = Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw as ArrayBuffer);
       session.write(buf);
@@ -111,6 +122,12 @@ export function attachClient(ws: WebSocket, session: PtySession, since: number):
     try {
       msg = JSON.parse(raw.toString());
     } catch {
+      return;
+    }
+    // A read-only attach can keep the connection alive (pong) but can't drive
+    // the session in any way.
+    if (readOnly) {
+      if (msg.type === 'pong') awaitingPongSince = null;
       return;
     }
     switch (msg.type) {

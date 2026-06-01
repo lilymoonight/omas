@@ -239,7 +239,18 @@ export const api = {
     req<FsReadResp>('GET', `sessions/${id}/fs/read?path=${encodeURIComponent(path)}`),
   fsWrite: (id: string, path: string, content: string) =>
     req<{ ok: true; path: string; size: number }>('PUT', `sessions/${id}/fs/write`, { path, content }),
+  /** Absolute URL the browser can navigate to download a file (or a dir as .tar.gz). */
+  fsDownloadUrl: (id: string, path: string) =>
+    `${apiBase}sessions/${encodeURIComponent(id)}/fs/download?path=${encodeURIComponent(path)}`,
+  /** Absolute URL to download the full terminal contents (screen + scrollback). */
+  sessionExportUrl: (id: string, format: 'txt' | 'html') =>
+    `${apiBase}sessions/${encodeURIComponent(id)}/export?format=${format}`,
   fsUpload: uploadFile,
+  getShare: (id: string) => req<{ token: string | null }>('GET', `sessions/${id}/share`),
+  createShare: (id: string) => req<{ ok: true; token: string }>('POST', `sessions/${id}/share`),
+  revokeShare: (id: string) => req<{ ok: true }>('DELETE', `sessions/${id}/share`),
+  sharedMeta: (token: string) =>
+    req<{ ok: true; title: string; cols: number; rows: number }>('GET', `shared/${encodeURIComponent(token)}`),
   listSites: () => req<SitesResp>('GET', 'sites'),
   createSite: (input: { slug: string; root: string; spa?: boolean }) =>
     req<PublicSite>('POST', 'sites', input),

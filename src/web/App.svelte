@@ -4,9 +4,11 @@
   import { auth, checkAuth } from './lib/stores.js';
   import List from './routes/List.svelte';
   import Login from './routes/Login.svelte';
+  import CommandPalette from './components/CommandPalette.svelte';
   import type { Component } from 'svelte';
 
   let TerminalRoute = $state<Component<{ sessionId: string }> | null>(null);
+  let ShareRoute = $state<Component<{ token: string }> | null>(null);
 
   let current = $state($route);
   route.subscribe((r) => (current = r));
@@ -14,6 +16,9 @@
   let authState = $state($auth);
   auth.subscribe((a) => {
     authState = a;
+    // The read-only share viewer is a public, capability-based page — never
+    // bounce it through the login flow.
+    if (current.name === 'shared') return;
     if (a === 'out' && current.name !== 'login') navigate({ name: 'login' });
     if (a === 'in' && current.name === 'login') navigate({ name: 'list' });
   });
@@ -23,6 +28,9 @@
 
   onMount(() => {
     void checkAuth();
+    void import('./routes/ShareView.svelte').then((m) => {
+      ShareRoute = m.default;
+    });
     void import('./routes/History.svelte').then((m) => {
       HistoryRoute = m.default;
     });
@@ -35,7 +43,15 @@
   });
 </script>
 
-{#if authState === 'unknown'}
+{#if current.name === 'shared'}
+  {#if ShareRoute}
+    {#key current.token}
+      <ShareRoute token={current.token} />
+    {/key}
+  {:else}
+    <main class="boot">加载中…</main>
+  {/if}
+{:else if authState === 'unknown'}
   <main class="boot"></main>
 {:else if authState === 'out'}
   <Login />
@@ -63,6 +79,10 @@
   {/if}
 {:else if current.name === 'login'}
   <Login />
+{/if}
+
+{#if authState === 'in' && current.name !== 'shared'}
+  <CommandPalette />
 {/if}
 
 <style>

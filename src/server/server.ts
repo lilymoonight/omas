@@ -12,6 +12,8 @@ import { registerSystemRoutes } from './routes/system.js';
 import { registerGitRoutes } from './routes/git-status.js';
 import { registerGitFileRoutes } from './routes/git-file.js';
 import { registerFsRoutes } from './routes/fs.js';
+import { registerShareRoutes } from './routes/share.js';
+import { ShareStore } from './share/store.js';
 import { registerHistoryRoutes } from './history/index.js';
 import { installWsUpgrade } from './ws/upgrade.js';
 import { loadConfig, resolveConfigDir, isAuthRequired, type Config } from './config.js';
@@ -93,15 +95,20 @@ export async function createServer(config: ServerConfig) {
   }));
 
   const uploads = new UploadStore();
+  const shares = new ShareStore();
 
   registerSessionRoutes(app, hub);
   registerSystemRoutes(app);
   registerGitRoutes(app, hub);
   registerGitFileRoutes(app, hub);
   registerFsRoutes(app, hub, uploads);
+  registerShareRoutes(app, hub, shares);
   registerHistoryRoutes(app);
-  installWsUpgrade(app.server, hub, (req) =>
-    !isAuthRequired(cfg) || isAuthedFromRawHeaders(req, store),
+  installWsUpgrade(
+    app.server,
+    hub,
+    (req) => !isAuthRequired(cfg) || isAuthedFromRawHeaders(req, store),
+    shares,
   );
 
   // Public, no-auth static sites (/p/<slug>/). Persistent entries live in

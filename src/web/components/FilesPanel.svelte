@@ -13,8 +13,21 @@
     onSaved?: () => void;
   }> | null>(null);
 
-  interface Props { sessionId: string; }
-  const { sessionId }: Props = $props();
+  interface Props {
+    sessionId: string;
+    onNewSession?: (absDir: string) => void;
+  }
+  const { sessionId, onNewSession }: Props = $props();
+
+  /** Absolute path for a cwd-relative tree entry (root is the live cwd). */
+  function absOf(rel: string): string {
+    if (!root) return rel;
+    if (!rel) return root;
+    return root.replace(/\/+$/, '') + '/' + rel;
+  }
+  function downloadUrl(rel: string): string {
+    return api.fsDownloadUrl(sessionId, rel);
+  }
 
   let root = $state<string | null>(null);
   let error = $state<string | null>(null);
@@ -123,6 +136,16 @@
   <header>
     <span class="logo"><Icon name="folder" size={14} /></span>
     <span class="heading">文件</span>
+    {#if onNewSession && root}
+      <button
+        class="ghost icon-only refresh"
+        onclick={() => onNewSession?.(root!)}
+        title="在当前目录新建会话"
+        aria-label="在当前目录新建会话"
+      >
+        <Icon name="folder-plus" size={14} />
+      </button>
+    {/if}
     <button class="ghost icon-only refresh" onclick={() => refreshAll(false)} title="刷新" aria-label="刷新">
       <Icon name="refresh" size={14} />
     </button>
@@ -163,24 +186,46 @@
 
 {#snippet treeNode(entry: FsEntry, depth: number)}
   {#if entry.kind === 'dir'}
-    <button
-      class="row dir"
-      style={`--depth: ${depth}`}
-      onclick={() => toggleDir(entry.path)}
-      title={entry.path}
-    >
-      <span class="chev">
-        {#if loadingDirs.has(entry.path)}
-          <Icon name="refresh" size={12} />
-        {:else if expanded.has(entry.path)}
-          <Icon name="chevron-down" size={12} />
-        {:else}
-          <Icon name="chevron-right" size={12} />
+    <div class="row-wrap">
+      <button
+        class="row dir"
+        style={`--depth: ${depth}`}
+        onclick={() => toggleDir(entry.path)}
+        title={entry.path}
+      >
+        <span class="chev">
+          {#if loadingDirs.has(entry.path)}
+            <Icon name="refresh" size={12} />
+          {:else if expanded.has(entry.path)}
+            <Icon name="chevron-down" size={12} />
+          {:else}
+            <Icon name="chevron-right" size={12} />
+          {/if}
+        </span>
+        <span class="icon folder"><Icon name="folder" size={13} /></span>
+        <span class="name">{entry.name}</span>
+      </button>
+      <span class="row-actions">
+        {#if onNewSession}
+          <button
+            class="row-act"
+            onclick={() => onNewSession?.(absOf(entry.path))}
+            title="在此目录新建会话"
+            aria-label="在此目录新建会话"
+          >
+            <Icon name="folder-plus" size={13} />
+          </button>
         {/if}
+        <a
+          class="row-act"
+          href={downloadUrl(entry.path)}
+          title="下载该目录（.tar.gz）"
+          aria-label="下载该目录"
+        >
+          <Icon name="download" size={13} />
+        </a>
       </span>
-      <span class="icon folder"><Icon name="folder" size={13} /></span>
-      <span class="name">{entry.name}</span>
-    </button>
+    </div>
     {#if expanded.has(entry.path)}
       {#each children.get(entry.path) ?? [] as child (child.path)}
         {@render treeNode(child, depth + 1)}
@@ -190,16 +235,29 @@
       {/if}
     {/if}
   {:else}
-    <button
-      class="row file"
-      style={`--depth: ${depth}`}
-      onclick={() => openFile(entry.path)}
-      title="{entry.path} — 点击网页编辑"
-    >
-      <span class="chev" aria-hidden="true"></span>
-      <span class="icon file"><Icon name="file" size={13} /></span>
-      <span class="name">{entry.name}</span>
-    </button>
+    <div class="row-wrap">
+      <button
+        class="row file"
+        style={`--depth: ${depth}`}
+        onclick={() => openFile(entry.path)}
+        title="{entry.path} — 点击网页编辑"
+      >
+        <span class="chev" aria-hidden="true"></span>
+        <span class="icon file"><Icon name="file" size={13} /></span>
+        <span class="name">{entry.name}</span>
+      </button>
+      <span class="row-actions">
+        <a
+          class="row-act"
+          href={downloadUrl(entry.path)}
+          download={entry.name}
+          title="下载文件"
+          aria-label="下载文件"
+        >
+          <Icon name="download" size={13} />
+        </a>
+      </span>
+    </div>
   {/if}
 {/snippet}
 
@@ -332,13 +390,23 @@
     min-height: 0;
   }
 
+  .row-wrap {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    border-radius: 4px;
+  }
+  .row-wrap:hover { background: var(--bg-hover); }
+  .row-wrap:hover .row { background: transparent; }
+
   .row {
     --depth: 0;
     display: grid;
     grid-template-columns: 14px 16px minmax(0, 1fr);
     align-items: center;
     gap: 4px;
-    width: 100%;
+    flex: 1;
     min-width: 0;
     box-sizing: border-box;
     margin: 0;
@@ -355,6 +423,35 @@
   }
   .row:hover { background: var(--bg-hover); }
   .row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+  .row-actions {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+    flex-shrink: 0;
+    padding-right: 2px;
+    /* Kept dimly visible (not hover-only) so the actions are discoverable at a
+       glance and usable on touch devices; they brighten on hover/focus. */
+    opacity: 0.4;
+    transition: opacity 0.1s ease;
+  }
+  .row-wrap:hover .row-actions,
+  .row-actions:focus-within { opacity: 1; }
+  .row-act {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: var(--fg-muted);
+    border-radius: 4px;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .row-act:hover { background: var(--accent-soft); color: var(--accent); }
+  .row-act:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; opacity: 1; }
 
   .chev {
     display: inline-flex;

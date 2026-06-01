@@ -7,12 +7,53 @@
   import { themePref, cycleTheme, THEME_LABEL } from '../lib/theme.js';
   import { refreshHistoryAfterSessionClose } from '../lib/history-cache.js';
   import { navigate } from '../lib/router.js';
+  import { estimateTermSize } from '../lib/term-size.js';
   import { NARROW_BREAKPOINT } from '../lib/term-layout.js';
   import type { Session } from '../../shared/session.js';
+  import type { Component } from 'svelte';
   import Icon from '../components/Icon.svelte';
 
   interface Props { sessionId: string; }
   const { sessionId }: Props = $props();
+
+  let EditorModal = $state<Component<{
+    sessionId: string;
+    path: string;
+    root: string;
+    onClose: () => void;
+    onSaved?: () => void;
+  }> | null>(null);
+  let editingPath = $state<string | null>(null);
+  let editingRoot = $state('');
+
+  async function openTerminalPath(raw: string) {
+    // Drop any :line[:col] suffix; we only open the file, not a position.
+    const p = raw.replace(/:(\d+)(?::\d+)?$/, '');
+    if (!p || p.startsWith('~')) return; // can't resolve $HOME on the client
+    let cwd = '';
+    try {
+      cwd = (await api.fsCwd(sessionId)).cwd;
+    } catch {
+      cwd = (session?.liveCwd || session?.cwd || '') as string;
+    }
+    if (!cwd) return;
+    const cwdNorm = cwd.replace(/\/+$/, '');
+    let rel: string;
+    if (p.startsWith('/')) {
+      if (p === cwdNorm) return;
+      if (p.startsWith(cwdNorm + '/')) rel = p.slice(cwdNorm.length + 1);
+      else {
+        alert('该路径不在会话工作目录内，无法在网页打开。');
+        return;
+      }
+    } else {
+      rel = p.replace(/^\.\//, '');
+    }
+    if (!rel) return;
+    if (!EditorModal) EditorModal = (await import('../components/FileEditorModal.svelte')).default;
+    editingRoot = cwd;
+    editingPath = rel;
+  }
 
   let session = $state<Session | null>(null);
   let status = $state<'connecting' | 'open' | 'closed'>('connecting');
@@ -25,6 +66,62 @@
   let drawerRight = $state(false);
 
   let filesPanel = $state<{ refresh: () => void } | null>(null);
+  let xterm = $state<{
+    toggleRecording: () => void;
+    isRecording: () => boolean;
+  } | null>(null);
+
+  let menuOpen = $state(false);
+  let recording = $state(false);
+  let shareToken = $state<string | null>(null);
+  let shareBusy = $state(false);
+  let shareCopied = $state(false);
+
+  function shareUrl(token: string): string {
+    return `${location.origin}${location.pathname}${location.search}#/shared/${token}`;
+  }
+
+  async function shareSession() {
+    shareBusy = true;
+    try {
+      const { token } = await api.createShare(sessionId);
+      shareToken = token;
+      try {
+        await navigator.clipboard.writeText(shareUrl(token));
+        shareCopied = true;
+        setTimeout(() => (shareCopied = false), 1600);
+      } catch { /* clipboard blocked — link is still visible in the menu */ }
+    } catch (e) {
+      alert(`创建分享链接失败：${e}`);
+    } finally {
+      shareBusy = false;
+    }
+  }
+
+  async function revokeShare() {
+    try {
+      await api.revokeShare(sessionId);
+      shareToken = null;
+    } catch (e) {
+      alert(`撤销失败：${e}`);
+    }
+  }
+
+  function exportAs(kind: 'txt' | 'html' | 'cast') {
+    menuOpen = false;
+    if (kind === 'cast') {
+      xterm?.toggleRecording();
+      return;
+    }
+    // Server export pulls the full headless mirror (screen + scrollback), so it
+    // includes history rather than just the client's current screen.
+    const a = document.createElement('a');
+    a.href = api.sessionExportUrl(sessionId, kind);
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
 
   type UploadItem = {
     id: number;
@@ -134,6 +231,7 @@
       const s = await api.getSession(sessionId);
       session = s;
       title = s.title;
+      api.getShare(sessionId).then((r) => (shareToken = r.token)).catch(() => { /* ignore */ });
     } catch (e) {
       if (String(e).includes('404')) notFound = true;
     }
@@ -156,6 +254,20 @@
   function closeDrawers(): void {
     drawerLeft = false;
     drawerRight = false;
+  }
+
+  async function newSessionInDir(absDir: string) {
+    // Open the tab synchronously inside the click so popup blockers stay happy.
+    const popup = window.open('about:blank', '_blank');
+    try {
+      const s = await api.createSession({ ...estimateTermSize(), cwd: absDir });
+      const url = `${location.pathname}${location.search}#/s/${s.id}`;
+      if (popup) popup.location.href = url;
+      else navigate({ name: 'terminal', id: s.id });
+    } catch (e) {
+      if (popup) popup.close();
+      alert(`新建会话失败：${e}`);
+    }
   }
 
   async function destroy() {
@@ -225,6 +337,62 @@
       </button>
     {/if}
 
+    {#if recording}
+      <span class="rec-pill" title="正在录制终端（asciinema）">
+        <span class="rec-dot"></span>REC
+      </span>
+    {/if}
+
+    <button
+      class="ghost icon-only"
+      class:active={!!shareToken}
+      title={shareToken ? '已生成只读分享链接（点击复制）' : '生成只读分享链接'}
+      aria-label="分享只读链接"
+      disabled={shareBusy}
+      onclick={shareSession}
+    >
+      {#if shareCopied}
+        <Icon name="check" size={15} />
+      {:else}
+        <Icon name="share" size={15} />
+      {/if}
+    </button>
+
+    <div class="menu-anchor">
+      <button
+        class="ghost icon-only"
+        class:active={menuOpen}
+        title="导出 / 录制"
+        aria-label="导出或录制终端"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        onclick={() => (menuOpen = !menuOpen)}
+      >
+        <Icon name="download" size={15} />
+      </button>
+      {#if menuOpen}
+        <button class="menu-backdrop" aria-label="关闭菜单" onclick={() => (menuOpen = false)}></button>
+        <div class="menu" role="menu">
+          <button class="menu-item" role="menuitem" onclick={() => exportAs('txt')}>
+            <Icon name="file" size={14} /> 导出纯文本 (.txt)
+          </button>
+          <button class="menu-item" role="menuitem" onclick={() => exportAs('html')}>
+            <Icon name="globe" size={14} /> 导出彩色 HTML
+          </button>
+          <button class="menu-item" role="menuitem" onclick={() => exportAs('cast')}>
+            <Icon name="circle" size={14} />
+            {recording ? '停止录制并下载 (.cast)' : '开始录制 (asciinema)'}
+          </button>
+          {#if shareToken}
+            <div class="menu-sep"></div>
+            <button class="menu-item danger" role="menuitem" onclick={() => { menuOpen = false; revokeShare(); }}>
+              <Icon name="link" size={14} /> 撤销分享链接
+            </button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
     <button
       class="ghost icon-only"
       title={`主题：${THEME_LABEL[$themePref]}（点击切换）`}
@@ -257,7 +425,7 @@
 
     {#if session}
       <div class="side-slot left">
-        <FilesPanel bind:this={filesPanel} {sessionId} />
+        <FilesPanel bind:this={filesPanel} {sessionId} onNewSession={newSessionInDir} />
       </div>
     {/if}
 
@@ -279,11 +447,15 @@
         </div>
       {:else if session}
         <XTerm
+          bind:this={xterm}
           {sessionId}
+          {title}
           onTitle={(t) => (title = t)}
           onClientCount={(n) => (clientCount = n)}
           onExit={(info) => (exitInfo = info)}
           onStatus={(s) => (status = s)}
+          onRecordingChange={(r) => (recording = r)}
+          onOpenPath={openTerminalPath}
         />
       {/if}
 
@@ -342,6 +514,16 @@
   </div>
 </div>
 
+{#if editingPath && EditorModal}
+  <EditorModal
+    {sessionId}
+    path={editingPath}
+    root={editingRoot}
+    onClose={() => (editingPath = null)}
+    onSaved={() => filesPanel?.refresh()}
+  />
+{/if}
+
 <style>
   .wrap { display: flex; flex-direction: column; height: 100%; background: var(--bg-soft); min-height: 0; }
   header {
@@ -354,6 +536,57 @@
   }
   .back { padding: 0; width: 32px; height: 32px; }
   .drawer-toggle.active { background: var(--accent-soft); color: var(--accent); }
+  :global(.ghost.icon-only.active) { background: var(--accent-soft); color: var(--accent); }
+
+  .rec-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: var(--danger-soft); color: var(--danger);
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  }
+  .rec-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--danger);
+    animation: rec-pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+  .menu-anchor { position: relative; display: inline-flex; }
+  .menu-backdrop {
+    position: fixed; inset: 0; z-index: 40;
+    border: none; background: transparent; padding: 0; margin: 0; cursor: default;
+  }
+  .menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 41;
+    min-width: 220px;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    padding: 4px;
+    display: flex; flex-direction: column; gap: 1px;
+  }
+  .menu-item {
+    display: flex; align-items: center; gap: 9px;
+    width: 100%;
+    padding: 8px 10px;
+    border: none; background: transparent;
+    color: var(--fg);
+    font-size: 13px;
+    text-align: left;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .menu-item:hover { background: var(--bg-hover); }
+  .menu-item.danger { color: var(--danger); }
+  .menu-item.danger:hover { background: var(--danger-soft); }
+  .menu-item > :global(svg) { flex-shrink: 0; color: var(--fg-muted); }
+  .menu-item.danger > :global(svg) { color: var(--danger); }
+  .menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
   .title-icon { color: var(--accent); display: inline-flex; }
   .title {
     font-weight: 600;
