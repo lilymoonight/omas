@@ -222,9 +222,15 @@ export type RuntimeInfo = { defaultCwd: string; sandbox: SandboxRuntime };
 export type DirEntry = { name: string; path: string };
 export type DirListResp = { dir: string; parent: string | null; entries: DirEntry[] };
 
+let runtimePromise: Promise<RuntimeInfo> | null = null;
+
 export const api = {
   health: () => req<{ ok: boolean; uptime: number; sessions: number }>('GET', 'health'),
   runtime: () => req<RuntimeInfo>('GET', 'runtime'),
+  // Runtime config (sandbox policy, default cwd) only changes on a server
+  // restart — which drops this SPA's sockets anyway — so memoize it for the
+  // page's lifetime instead of refetching every time a dialog opens.
+  runtimeCached: () => (runtimePromise ??= req<RuntimeInfo>('GET', 'runtime')),
   listDirs: (path = '') => req<DirListResp>('GET', `dirs?path=${encodeURIComponent(path)}`),
   listSessions: () => req<Session[]>('GET', 'sessions'),
   createSession: (input: CreateSessionInput) => req<Session>('POST', 'sessions', input),

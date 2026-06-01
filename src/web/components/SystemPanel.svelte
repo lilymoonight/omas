@@ -7,10 +7,18 @@
   let error = $state<string | null>(null);
   let timer: ReturnType<typeof setInterval> | undefined;
   let onVisChange: (() => void) | undefined;
+  // Skip reassigning (and re-rendering + re-animating the bars) when the polled
+  // stats are byte-for-byte identical to what we already show.
+  let lastJson = '';
 
   async function refresh() {
     try {
-      stats = await api.systemStats();
+      const next = await api.systemStats();
+      const json = JSON.stringify(next);
+      if (json !== lastJson) {
+        lastJson = json;
+        stats = next;
+      }
       error = null;
     } catch (e) {
       error = String(e);

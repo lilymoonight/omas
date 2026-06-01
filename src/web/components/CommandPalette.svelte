@@ -96,15 +96,20 @@
     { id: 'logout', label: '退出登录', icon: 'log-out', keywords: 'logout sign out 退出 登出', run: () => { close(); void logout(); } },
   ]);
 
+  // The palette is always mounted; only rebuild the session command list while
+  // it's open so the 3s sessions poll doesn't churn N Cmd objects in the
+  // background (the list is only ever shown when `open`).
   const sessionCmds = $derived<Cmd[]>(
-    $sessions.map((s) => ({
-      id: `s:${s.id}`,
-      label: s.title,
-      hint: (s.liveCwd ?? s.cwd) ?? undefined,
-      icon: 'terminal' as const,
-      keywords: `${s.title} ${(s.liveCwd ?? s.cwd) ?? ''} ${s.agent ?? ''}`,
-      run: () => { close(); openSessionTab(s.id); },
-    })),
+    open
+      ? $sessions.map((s) => ({
+          id: `s:${s.id}`,
+          label: s.title,
+          hint: (s.liveCwd ?? s.cwd) ?? undefined,
+          icon: 'terminal' as const,
+          keywords: `${s.title} ${(s.liveCwd ?? s.cwd) ?? ''} ${s.agent ?? ''}`,
+          run: () => { close(); openSessionTab(s.id); },
+        }))
+      : [],
   );
 
   /** Case-insensitive subsequence match; returns true when every query char appears in order. */

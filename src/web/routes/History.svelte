@@ -19,7 +19,14 @@
   let error = $state<string | null>(null);
   /** Tagged with the kind we're resuming as so we can disable both buttons. */
   let resumingId = $state<string | null>(null);
+  let filterRaw = $state('');
   let filter = $state('');
+  let filterTimer: ReturnType<typeof setTimeout> | undefined;
+  function onFilterInput(): void {
+    clearTimeout(filterTimer);
+    // Debounce so filtering + regrouping a large history doesn't run on every keystroke.
+    filterTimer = setTimeout(() => { filter = filterRaw; }, 150);
+  }
   let activeSource = $state<HistorySource | 'all'>('all');
   let lastFetchAt = $state<number>(0);
   let pageEl = $state<HTMLElement | undefined>(undefined);
@@ -146,14 +153,20 @@
 
   let groups = $derived.by(() => {
     const byProject = new Map<string, HistorySession[]>();
+    // Track each group's latest activity in one pass (avoids re-parsing dates
+    // and a Math.max(...spread) per comparison during the sort).
+    const lastByProject = new Map<string, number>();
     for (const s of visible) {
-      const arr = byProject.get(s.cwd) ?? [];
-      arr.push(s);
-      byProject.set(s.cwd, arr);
+      const arr = byProject.get(s.cwd);
+      if (arr) arr.push(s);
+      else byProject.set(s.cwd, [s]);
+      const t = +new Date(s.lastActivityAt);
+      const prev = lastByProject.get(s.cwd);
+      if (prev === undefined || t > prev) lastByProject.set(s.cwd, t);
     }
     return [...byProject.entries()].sort((a, b) => {
-      const aLast = Math.max(...a[1].map((s) => +new Date(s.lastActivityAt)));
-      const bLast = Math.max(...b[1].map((s) => +new Date(s.lastActivityAt)));
+      const aLast = lastByProject.get(a[0]) ?? 0;
+      const bLast = lastByProject.get(b[0]) ?? 0;
       if (bLast !== aLast) return bLast - aLast;
       return a[0].localeCompare(b[0]);
     });
@@ -172,7 +185,7 @@
         <div class="subtitle">从 AI 工具的历史会话恢复 · 共 {sessions.length} 个</div>
       </div>
     </div>
-    <input class="search" placeholder="搜索标题、目录或项目…" bind:value={filter} />
+    <input class="search" placeholder="搜索标题、目录或项目…" bind:value={filterRaw} oninput={onFilterInput} />
     <span class="freshness" title="仅在打开本页、关闭终端标签或手动刷新时更新；浏览时不会自动刷新">
       {fmtFreshness()}
     </span>

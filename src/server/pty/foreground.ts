@@ -85,14 +85,30 @@ export function parsePsRows(stdout: string): ProcRow[] {
   return rows;
 }
 
-/** All pids in the subtree rooted at `rootPid` (inclusive). */
-export function subtreePids(rows: ProcRow[], rootPid: number): number[] {
+/** pid → row and ppid → child pids, built once per snapshot and reused across
+ *  all per-session lookups (avoids O(sessions × procs) re-indexing). */
+type ProcIndex = { byPid: Map<number, ProcRow>; children: Map<number, number[]> };
+
+function buildIndex(rows: ProcRow[]): ProcIndex {
+  const byPid = new Map<number, ProcRow>();
   const children = new Map<number, number[]>();
   for (const r of rows) {
+    byPid.set(r.pid, r);
     const arr = children.get(r.ppid);
     if (arr) arr.push(r.pid);
     else children.set(r.ppid, [r.pid]);
   }
+  return { byPid, children };
+}
+
+/** All pids in the subtree rooted at `rootPid` (inclusive). Pass a prebuilt
+ *  `children` map to avoid re-scanning all rows on each call. */
+export function subtreePids(
+  rows: ProcRow[],
+  rootPid: number,
+  children?: Map<number, number[]>,
+): number[] {
+  const ch = children ?? buildIndex(rows).children;
   const out: number[] = [];
   const stack = [rootPid];
   const seen = new Set<number>();
@@ -101,7 +117,7 @@ export function subtreePids(rows: ProcRow[], rootPid: number): number[] {
     if (seen.has(pid)) continue;
     seen.add(pid);
     out.push(pid);
-    for (const c of children.get(pid) ?? []) stack.push(c);
+    for (const c of ch.get(pid) ?? []) stack.push(c);
   }
   return out;
 }
@@ -115,12 +131,13 @@ export function subtreeCpuRate(
   rootPid: number,
   prev: { at: number; byPid: Map<number, number> },
   cur: { at: number; byPid: Map<number, number> },
+  children?: Map<number, number[]>,
 ): number {
   const dt = (cur.at - prev.at) / 1000;
   if (dt <= 0) return 0;
   let curSum = 0;
   let prevSum = 0;
-  for (const pid of subtreePids(rows, rootPid)) {
+  for (const pid of subtreePids(rows, rootPid, children)) {
     curSum += cur.byPid.get(pid) ?? 0;
     prevSum += prev.byPid.get(pid) ?? 0;
   }
@@ -139,15 +156,12 @@ export function subtreeCpuRate(
  * Pick the process the user is interacting with in the shell's tty foreground
  * group, or null when only the shell itself is foreground (idle at prompt).
  */
-export function pickForegroundRow(rows: ProcRow[], shellPid: number): ProcRow | null {
-  const byPid = new Map<number, ProcRow>();
-  const children = new Map<number, number[]>();
-  for (const r of rows) {
-    byPid.set(r.pid, r);
-    const arr = children.get(r.ppid);
-    if (arr) arr.push(r.pid);
-    else children.set(r.ppid, [r.pid]);
-  }
+export function pickForegroundRow(
+  rows: ProcRow[],
+  shellPid: number,
+  index?: ProcIndex,
+): ProcRow | null {
+  const { byPid, children } = index ?? buildIndex(rows);
 
   // Collect descendants (excluding the shell itself) that are in the tty
   // foreground process group.
@@ -195,6 +209,15 @@ let inflight: Promise<ProcRow[]> | null = null;
 type CpuSample = { at: number; byPid: Map<number, number> };
 let cpuPrev: CpuSample | null = null;
 let cpuCur: CpuSample | null = null;
+// Memoized pid index for the current snapshot rows (reused across poll calls).
+let indexCache: { rows: ProcRow[]; index: ProcIndex } | null = null;
+
+function indexFor(rows: ProcRow[]): ProcIndex {
+  if (indexCache && indexCache.rows === rows) return indexCache.index;
+  const index = buildIndex(rows);
+  indexCache = { rows, index };
+  return index;
+}
 
 async function psSnapshotUncached(): Promise<ProcRow[]> {
   const args =
@@ -239,8 +262,9 @@ export async function foregroundForPids(
   if (valid.length === 0) return out;
   const rows = await psSnapshot();
   if (rows.length === 0) return out;
+  const index = indexFor(rows);
   for (const pid of valid) {
-    const row = pickForegroundRow(rows, pid);
+    const row = pickForegroundRow(rows, pid, index);
     const agent = row ? classifyAgent(row.command) : null;
     const foreground = row ? (agent ?? commandBasename(row.command)) : null;
     let agentState: AgentState | null = null;
@@ -249,7 +273,7 @@ export async function foregroundForPids(
       const active =
         cpuPrev != null
         && cpuCur != null
-        && subtreeCpuRate(rows, row.pid, cpuPrev, cpuCur) >= ACTIVE_CPU_RATE;
+        && subtreeCpuRate(rows, row.pid, cpuPrev, cpuCur, index.children) >= ACTIVE_CPU_RATE;
       agentState = active ? 'active' : 'idle';
     }
     out.set(pid, { foreground, agent, agentState });
@@ -261,4 +285,5 @@ export function clearForegroundSnapshot(): void {
   snapshot = null;
   cpuPrev = null;
   cpuCur = null;
+  indexCache = null;
 }

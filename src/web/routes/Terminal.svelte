@@ -180,9 +180,16 @@
         status: 'uploading',
       };
       uploads = [...uploads, item];
+      // XHR `progress` can fire dozens of times/sec; rebuilding the whole
+      // uploads array each time is wasteful. Throttle to ~10 fps, but always
+      // flush the final (loaded === total) tick.
+      let lastTick = 0;
       try {
         await api.fsUpload(sessionId, file, {
           onProgress: (loaded, total) => {
+            const now = performance.now();
+            if (loaded < total && now - lastTick < 100) return;
+            lastTick = now;
             uploads = uploads.map((u) => (u.id === item.id ? { ...u, loaded, total } : u));
           },
         });

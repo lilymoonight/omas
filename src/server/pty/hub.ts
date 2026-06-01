@@ -1,4 +1,5 @@
 import { PtySession, type PtySessionOpts } from './session.js';
+import { clearShellCwdCache } from './shell-cwd.js';
 import { logger } from '../logger.js';
 
 export type HubOpts = {
@@ -35,6 +36,9 @@ export class SessionHub {
     session.on('exit', () => {
       logger.info({ id: session.id, exitCode: session.exitCode }, 'pty exited; removing');
       this.sessions.delete(session.id);
+      // Drop the per-pid cwd cache entry so it can't accumulate (or, worse, be
+      // served for a future process that reuses this pid).
+      if (session.pid != null) clearShellCwdCache(session.pid);
     });
     logger.info({ id: session.id, shell: session.shell, cwd: session.cwd }, 'pty spawned');
     return session;

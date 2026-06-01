@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { type SessionHub, HubError } from '../pty/hub.js';
 import { foregroundForPids } from '../pty/foreground.js';
-import { shellCwd } from '../pty/shell-cwd.js';
+import { shellCwd, shellCwdMany } from '../pty/shell-cwd.js';
 import { resolveSandboxDir, type SandboxSettings } from '../pty/sandbox.js';
 import { verifyPassword } from '../auth/password.js';
 import type { LoginLimiter } from '../auth/limiter.js';
@@ -69,18 +69,19 @@ export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRo
   const sandboxCfg = opts.sandbox ?? null;
   app.get('/api/sessions', async () => {
     const list = hub.list();
+    const pids = list.map((s) => s.pid);
     const [fg, cwds] = await Promise.all([
-      foregroundForPids(list.map((s) => s.pid)),
-      Promise.all(list.map((s) => shellCwd(s.pid))),
+      foregroundForPids(pids),
+      shellCwdMany(pids),
     ]);
-    return list.map((s, i) => {
+    return list.map((s) => {
       const info = s.pid != null ? fg.get(s.pid) : undefined;
       return {
         ...s.toJSON(),
         foreground: info?.foreground ?? null,
         agent: info?.agent ?? null,
         agentState: info?.agentState ?? null,
-        liveCwd: cwds[i] ?? null,
+        liveCwd: s.pid != null ? cwds.get(s.pid) ?? null : null,
       };
     });
   });

@@ -40,7 +40,7 @@
 
   onMount(async () => {
     try {
-      runtime = await api.runtime();
+      runtime = await api.runtimeCached();
     } catch {
       runtime = { defaultCwd: '', sandbox: { enabled: false } };
     }

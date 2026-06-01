@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { logger } from '../logger.js';
@@ -36,10 +37,10 @@ function notFound(reply: any): unknown {
   return reply.code(404).type('text/plain; charset=utf-8').send('404 Not Found');
 }
 
-function serveIndexFallback(reply: any, site: ResolvedSite): unknown {
+async function serveIndexFallback(reply: any, site: ResolvedSite): Promise<unknown> {
   const index = path.join(site.root, 'index.html');
   try {
-    const st = fs.statSync(index);
+    const st = await fsp.stat(index);
     if (st.isFile()) return sendFile(reply, index, st.size);
   } catch {
     /* no index */
@@ -72,31 +73,48 @@ function fmtSize(bytes: number): string {
  * `index.html`. `urlPath` is the request path (already ending in `/`) and is
  * used both to build relative links and to know whether a parent link applies.
  */
-function renderDirListing(reply: any, absDir: string, urlPath: string, slugRootPath: string): unknown {
+async function renderDirListing(reply: any, absDir: string, urlPath: string, slugRootPath: string): Promise<unknown> {
   let names: fs.Dirent[];
   try {
-    names = fs.readdirSync(absDir, { withFileTypes: true });
+    names = await fsp.readdir(absDir, { withFileTypes: true });
   } catch {
     return notFound(reply);
   }
 
+  // Resolve symlinks (to know dir-ness) in parallel so a big dir doesn't serialize stats.
+  const classified = await Promise.all(
+    names.map(async (d) => {
+      let isDir = d.isDirectory();
+      if (d.isSymbolicLink()) {
+        try {
+          isDir = (await fsp.stat(path.join(absDir, d.name))).isDirectory();
+        } catch {
+          return null;
+        }
+      }
+      return { d, isDir };
+    }),
+  );
   const dirs: fs.Dirent[] = [];
   const files: fs.Dirent[] = [];
-  for (const d of names) {
-    // Resolve symlinks so a link to a directory still sorts/links correctly.
-    let isDir = d.isDirectory();
-    if (d.isSymbolicLink()) {
-      try {
-        isDir = fs.statSync(path.join(absDir, d.name)).isDirectory();
-      } catch {
-        continue;
-      }
-    }
-    (isDir ? dirs : files).push(d);
+  for (const c of classified) {
+    if (!c) continue;
+    (c.isDir ? dirs : files).push(c.d);
   }
   const byName = (a: fs.Dirent, b: fs.Dirent) => a.name.localeCompare(b.name, undefined, { numeric: true });
   dirs.sort(byName);
   files.sort(byName);
+
+  // File sizes in parallel too.
+  const sizes = await Promise.all(
+    files.map(async (f) => {
+      try {
+        return fmtSize((await fsp.stat(path.join(absDir, f.name))).size);
+      } catch {
+        return '';
+      }
+    }),
+  );
 
   const rows: string[] = [];
   // A parent link, unless we are already at the site root.
@@ -107,18 +125,12 @@ function renderDirListing(reply: any, absDir: string, urlPath: string, slugRootP
     const enc = encodeURIComponent(d.name);
     rows.push(`<li class="dir"><a href="${enc}/">${escapeHtml(d.name)}/</a></li>`);
   }
-  for (const f of files) {
+  files.forEach((f, i) => {
     const enc = encodeURIComponent(f.name);
-    let size = '';
-    try {
-      size = fmtSize(fs.statSync(path.join(absDir, f.name)).size);
-    } catch {
-      /* ignore */
-    }
     rows.push(
-      `<li class="file"><a href="${enc}">${escapeHtml(f.name)}</a><span class="size">${size}</span></li>`,
+      `<li class="file"><a href="${enc}">${escapeHtml(f.name)}</a><span class="size">${sizes[i]}</span></li>`,
     );
-  }
+  });
 
   const title = escapeHtml(decodeURIComponent(urlPath));
   const html = `<!doctype html>
@@ -209,7 +221,7 @@ export function registerSiteRoutes(app: App, mgr: SiteManager): void {
 
     let st: fs.Stats;
     try {
-      st = fs.statSync(abs);
+      st = await fsp.stat(abs);
     } catch {
       return site.spa ? serveIndexFallback(reply, site) : notFound(reply);
     }
@@ -219,7 +231,7 @@ export function registerSiteRoutes(app: App, mgr: SiteManager): void {
       if (!pathPart.endsWith('/')) return redirectWithSlash(req, reply);
       const index = path.join(abs, 'index.html');
       try {
-        const ist = fs.statSync(index);
+        const ist = await fsp.stat(index);
         if (ist.isFile()) return sendFile(reply, index, ist.size);
       } catch {
         /* no index in this dir */
