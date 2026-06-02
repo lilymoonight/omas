@@ -115,15 +115,17 @@ export class PtySession extends EventEmitter {
       if (!resolved) {
         throw new Error(`sandbox cwd escapes sandbox root (${opts.sandbox.root})`);
       }
-      // Sources must exist before we sandbox them; HOME/TMPDIR live inside the
-      // writable dir. Then canonicalize, since the macOS Seatbelt profile matches
-      // literal real paths (e.g. /tmp → /private/tmp).
-      fs.mkdirSync(resolved.home, { recursive: true });
+      // TMPDIR lives inside the writable dir and must exist first. Canonicalize
+      // paths, since the macOS Seatbelt profile matches literal real paths
+      // (e.g. /tmp → /private/tmp, and a home that is itself a symlink).
       fs.mkdirSync(resolved.tmp, { recursive: true });
       const writable = fs.realpathSync(resolved.writable);
+      // Use the operator's REAL home (writable) so agents can read AND write
+      // their existing config/credentials/state (~/.claude, ~/.cursor, …).
+      const home = fs.realpathSync(os.homedir());
       const spec = {
         writable,
-        home: path.join(writable, '.home'),
+        home,
         tmp: path.join(writable, '.tmp'),
         net: opts.sandbox.net,
       };

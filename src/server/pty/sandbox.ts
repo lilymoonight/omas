@@ -1,19 +1,24 @@
-// Per-session filesystem sandbox. The whole filesystem is read-only; only the
-// session's chosen working directory is writable, so a sandboxed shell (and
-// anything it runs — including an agent) can read the box but can only WRITE
-// inside that one directory. The writable directory must resolve to within an
-// operator-set ceiling (`sandbox root`) so a client can't request `/` and get
-// the whole disk back.
+// Per-session filesystem sandbox. The whole filesystem is read-only; the
+// session's chosen working directory AND the operator's real home directory are
+// writable, so a sandboxed shell (and anything it runs — including an agent) can
+// read the box but only WRITE inside its working dir and the user's home. The
+// working dir must resolve to within an operator-set ceiling (`sandbox root`) so
+// a client can't request `/` and get the whole disk back.
+//
+// HOME is the operator's REAL home (not an isolated stub) so agents can read AND
+// write their existing config/credentials/state (e.g. ~/.claude, ~/.cursor).
+// This is a deliberate trade-off: it widens the writable area beyond the sandbox
+// root, but everything outside the working dir and home (system files, /etc,
+// other users) stays read-only.
 //
 // Two backends, picked by platform:
-//   - Linux  → bubblewrap (`bwrap`): rebinds `/` read-only and the writable dir
-//     read-write, with a private tmpfs /tmp.
+//   - Linux  → bubblewrap (`bwrap`): rebinds `/` read-only, then the working dir
+//     and home read-write, with a private tmpfs /tmp.
 //   - macOS  → `sandbox-exec` (Seatbelt): a `(deny default)(allow file-read*)`
-//     profile that only permits file-write* under the writable dir (+ /dev).
+//     profile that permits file-write* under the working dir, home, and /dev.
 //
-// HOME and TMPDIR are pointed at `.home` / `.tmp` inside the writable dir so
-// tools can write caches/temp without escaping (on macOS we deny /tmp and
-// /var/folders outright, mirroring Linux's isolated tmpfs).
+// TMPDIR is pointed at `.tmp` inside the working dir so tools get a writable temp
+// (on macOS we deny /tmp and /var/folders outright; Linux uses an isolated tmpfs).
 //
 // The argv/profile builders are pure (unit-testable on any platform); the actual
 // spawn, realpath and availability checks live in session.ts / server.ts.
@@ -30,14 +35,14 @@ export type SandboxSettings = {
   defaultOn: boolean;
 };
 
-export type ResolvedSandbox = { writable: string; home: string; tmp: string; cwd: string };
+export type ResolvedSandbox = { writable: string; tmp: string; cwd: string };
 
 /**
- * Resolve a per-session writable directory against the sandbox root. The chosen
- * cwd doubles as the (only) writable area; HOME and TMPDIR live under it so tools
- * can write caches/temp without touching the real, read-only $HOME or escaping
- * to /tmp. Returns null when the requested path escapes the root (e.g. `/`, `..`,
- * an unrelated absolute path).
+ * Resolve a per-session working directory against the sandbox root. The chosen
+ * cwd is the working writable area; TMPDIR lives under it (`.tmp`) so tools get a
+ * writable temp without escaping to the locked-down /tmp. (HOME is the operator's
+ * real home, resolved by the caller, not derived here.) Returns null when the
+ * requested path escapes the root (e.g. `/`, `..`, an unrelated absolute path).
  */
 export function resolveSandboxDir(root: string, requestedCwd: string | undefined): ResolvedSandbox | null {
   const absRoot = path.resolve(root);
@@ -47,16 +52,18 @@ export function resolveSandboxDir(root: string, requestedCwd: string | undefined
     ? path.resolve(absRoot, requestedCwd)
     : absRoot;
   if (abs !== absRoot && !abs.startsWith(absRoot + path.sep)) return null;
-  return { writable: abs, home: path.join(abs, '.home'), tmp: path.join(abs, '.tmp'), cwd: abs };
+  return { writable: abs, tmp: path.join(abs, '.tmp'), cwd: abs };
 }
 
 /**
- * Build the bubblewrap argv that wraps `shell`. Whole FS read-only; `writable`
- * rebound read-write; a fresh /dev, /proc and a tmpfs /tmp; HOME pointed at
- * `home` (expected to live under `writable`). The shell starts in `writable`.
+ * Build the bubblewrap argv that wraps `shell`. Whole FS read-only; the working
+ * dir (`writable`) and the real `home` rebound read-write; a fresh /dev, /proc
+ * and a tmpfs /tmp; HOME pointed at `home`. The shell starts in `writable`.
  */
 export function buildBwrapArgv(opts: {
   writable: string;
+  /** Operator's real home directory — readable and writable so agents can use
+   *  their existing config/credentials. */
   home: string;
   net: boolean;
   shell: string;
@@ -72,8 +79,10 @@ export function buildBwrapArgv(opts: {
     '--dev', '/dev',
     '--proc', '/proc',
     '--tmpfs', '/tmp',
-    // The single writable area (a later --bind overrides the earlier --ro-bind).
+    // The writable areas (a later --bind overrides the earlier --ro-bind): the
+    // session working dir and the user's real home.
     '--bind', opts.writable, opts.writable,
+    '--bind', opts.home, opts.home,
     '--chdir', opts.writable,
     '--setenv', 'HOME', opts.home,
     '--die-with-parent',
@@ -92,12 +101,12 @@ function sbplQuote(p: string): string {
 
 /**
  * Build a macOS Seatbelt (sandbox-exec) profile: read everything, but only WRITE
- * under `writable` (which contains `.home` and `.tmp`) plus device nodes in /dev.
- * Network is allowed only when `net` is true. `writable` must be a canonical
- * (realpath'd) absolute path — Seatbelt matches literal canonical paths, so
- * /tmp/x won't match the real /private/tmp/x.
+ * under `writable` (the working dir, which contains `.tmp`), the real `home`, and
+ * device nodes in /dev. Network is allowed only when `net` is true. `writable`
+ * and `home` must be canonical (realpath'd) absolute paths — Seatbelt matches
+ * literal canonical paths, so /tmp/x won't match the real /private/tmp/x.
  */
-export function buildSeatbeltProfile(opts: { writable: string; net: boolean }): string {
+export function buildSeatbeltProfile(opts: { writable: string; home: string; net: boolean }): string {
   const lines = [
     '(version 1)',
     '(deny default)',
@@ -113,7 +122,13 @@ export function buildSeatbeltProfile(opts: { writable: string; net: boolean }): 
     // mode (arrow keys echo as ^[[D) and prints "can't set tty pgrp". Allowing
     // ioctls does not grant write access to file *contents*.
     '(allow file-ioctl)',
+    // setpriority(2)/nice(2): zsh nices background jobs by default (BG_NICE), so
+    // oh-my-zsh's async compinit prints "nice(5) failed: operation not permitted"
+    // without this. Scheduling priority can't be used to escape the sandbox.
+    '(allow system-sched)',
     `(allow file-write* (subpath "${sbplQuote(opts.writable)}"))`,
+    // The operator's real home, so agents can write their config/credentials/state.
+    `(allow file-write* (subpath "${sbplQuote(opts.home)}"))`,
     // Device nodes (the PTY slave, /dev/null, /dev/tty, …) must stay writable or
     // the shell can't talk to its terminal.
     '(allow file-write* (subpath "/dev"))',
@@ -133,11 +148,12 @@ export function buildSandboxCommand(
   opts: { writable: string; home: string; tmp: string; net: boolean; shell: string; shellArgs?: string[] },
 ): SandboxCommand {
   if (platform === 'darwin') {
-    const profile = buildSeatbeltProfile({ writable: opts.writable, net: opts.net });
+    const profile = buildSeatbeltProfile({ writable: opts.writable, home: opts.home, net: opts.net });
     return {
       file: 'sandbox-exec',
       args: ['-p', profile, opts.shell, ...(opts.shellArgs ?? [])],
-      // Keep HOME/TMPDIR inside the writable area (we deny /tmp & /var/folders).
+      // HOME is the real home (writable via the profile); TMPDIR stays inside the
+      // working dir since we deny /tmp & /var/folders.
       env: { HOME: opts.home, TMPDIR: opts.tmp },
     };
   }

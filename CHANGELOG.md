@@ -4,6 +4,16 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.5.3] - 2026-06-02
+
+### 变更
+
+- **沙箱会话改用真实主目录(可读写)**：此前沙箱把 `HOME` 指到工作目录下的空 `.home`，导致 claude / cursor 等 agent 读不到你已有的 `~/.claude`、`~/.cursor` 配置与凭据。现在 `HOME` 指向**真实用户主目录并将其纳入可写区**，agent 可正常读写其配置/凭据/状态。这是有意的权衡：可写范围由「仅工作目录」扩大到「工作目录 + 主目录」，但主目录之外的文件系统（系统文件、`/etc`、其他用户目录等）仍只读。`TMPDIR` 仍指向工作目录下的 `.tmp`（`/tmp` 在沙箱内被锁）。实现：Linux 在 `bwrap` 多绑一条 `--bind <home> <home>`；macOS 的 Seatbelt profile 增加 `file-write* (subpath <home>)`。
+
+### 修复
+
+- **macOS 沙箱内 `nice(5) failed: operation not permitted`**：zsh 默认开启 `BG_NICE`，会对后台任务调用 `setpriority`/`nice`（oh-my-zsh 的异步 compinit 会触发），被 Seatbelt 的 `(deny default)` 拦下。Seatbelt profile 增加 `(allow system-sched)` 放行调度优先级调用（不涉及文件写入或沙箱逃逸）。
+
 ## [1.5.2] - 2026-06-02
 
 ### 修复
