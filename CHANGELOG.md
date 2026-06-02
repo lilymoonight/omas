@@ -4,6 +4,12 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.5.2] - 2026-06-02
+
+### 修复
+
+- **macOS 新会话不再回显 `cd '<目录>'`**：旧的 Bun PTY 变通会在 shell 启动后向终端写一行 `cd '<工作目录>'`，被交互式 shell 回显为开头的一行提示。现已确认 Bun 1.3.x 的 `Bun.spawn({ terminal, cwd })` 在 macOS 上会正确应用 `cwd`，故移除该手动 `cd`——新会话直接在目标目录启动，开头不再有多余的 `cd` 行。
+
 ## [1.5.1] - 2026-06-02
 
 ### 性能优化

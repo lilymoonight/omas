@@ -41,19 +41,6 @@ function cleanEnv(env: Record<string, string | undefined>): Record<string, strin
   return out;
 }
 
-/** Bun.spawn({ terminal }) ignores `cwd` on macOS — cd after the shell attaches. */
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
-function applyCwd(terminal: BunTerminal, cwd: string): void {
-  const q = shellQuote(cwd);
-  // Small delay so zsh/bash finishes tty setup before consuming the cd line.
-  setTimeout(() => {
-    try { terminal.write(`cd ${q}\n`); } catch { /* shell may have exited */ }
-  }, 50);
-}
-
 function killSignal(proc: BunPtyProcess, signal: string): void {
   switch (signal) {
     case 'SIGKILL':
@@ -108,8 +95,9 @@ class DarwinPty extends EventEmitter implements IPty {
     this.proc = proc;
     this.terminal = proc.terminal;
     this.pid = proc.pid;
-
-    if (opts.cwd) applyCwd(this.terminal, opts.cwd);
+    // Bun.spawn({ terminal, cwd }) honors `cwd` on macOS (verified on Bun
+    // 1.3.x), so the shell already starts in the right directory — no need to
+    // write a `cd '<dir>'` line that the interactive shell would echo back.
 
     proc.exited.then((code) => {
       if (this.exited) return;
