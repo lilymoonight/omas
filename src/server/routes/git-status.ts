@@ -3,8 +3,16 @@ import { promisify } from 'node:util';
 import type { SessionHub } from '../pty/hub.js';
 import { shellCwd } from '../pty/shell-cwd.js';
 import { TtlCache } from '../lib/ttl-cache.js';
+import { wrapAsUser } from '../pty/fs-priv.js';
+import type { OsUserInfo } from '../pty/os-user.js';
 
 const exec = promisify(execFile);
+
+/** Run git, dropping to the session's UNIX user when set (Model B). */
+function gitExec(osUser: OsUserInfo | null, args: string[], opts: { cwd: string; timeout: number; maxBuffer: number }) {
+  const w = wrapAsUser(osUser, 'git', args);
+  return exec(w.file, w.args, { cwd: opts.cwd, timeout: opts.timeout, maxBuffer: opts.maxBuffer, env: w.env });
+}
 
 type App = {
   get: (path: string, handler: (req: any, reply: any) => any) => unknown;
@@ -34,14 +42,14 @@ export type GitStatus =
 const gitStatusCache = new TtlCache<string, GitStatus>(2000);
 const MAX_FILES = 500;
 
-async function gitStatus(cwd: string): Promise<GitStatus> {
+async function gitStatus(cwd: string, osUser: OsUserInfo | null): Promise<GitStatus> {
   const opts = { cwd, timeout: 3000, maxBuffer: 4 * 1024 * 1024 };
   try {
-    const { stdout: topOut } = await exec('git', ['rev-parse', '--show-toplevel'], opts);
+    const { stdout: topOut } = await gitExec(osUser, ['rev-parse', '--show-toplevel'], opts);
     const root = topOut.trim();
     const [statusOut, branchOut] = await Promise.all([
-      exec('git', ['status', '--porcelain=v1', '-uall', '-z'], { ...opts, cwd: root }).then((r) => r.stdout),
-      exec('git', ['status', '--branch', '--porcelain=v2', '-z'], { ...opts, cwd: root })
+      gitExec(osUser, ['status', '--porcelain=v1', '-uall', '-z'], { ...opts, cwd: root }).then((r) => r.stdout),
+      gitExec(osUser, ['status', '--branch', '--porcelain=v2', '-z'], { ...opts, cwd: root })
         .then((r) => r.stdout)
         .catch(() => ''),
     ]);
@@ -97,7 +105,7 @@ export function registerGitRoutes(app: App, hub: SessionHub): void {
     const cacheKey = `${id}\0${cwd}`;
     const cached = gitStatusCache.get(cacheKey);
     if (cached) return cached;
-    const result = await gitStatus(cwd);
+    const result = await gitStatus(cwd, session.osUserInfo);
     gitStatusCache.set(cacheKey, result);
     return result;
   });

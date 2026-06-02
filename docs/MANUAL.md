@@ -667,9 +667,9 @@ node tests/proxy-prefix.smoke.mjs
 
 | 项目 | 说明 |
 |------|------|
-| 单用户 | 一个密码，所有浏览器标签共享会话存储 |
+| 用户模型 | 单用户（一个密码）或可选 OS 级多用户（多账号、映射 UNIX 用户、按内核权限隔离） |
 | 重启丢 Shell | `systemctl restart` 会杀死所有 PTY，设计如此 |
-| 非多租户 | 无用户隔离 |
+| 隔离强度 | 多用户隔离依赖 OS 文件权限，面向**基本可信**的团队，非对抗本地提权的强边界 |
 | Bun PTY | 常规输入/输出/Ctrl+C/resize 正常；`fg`/`bg`/`jobs`/Ctrl+Z 可能不可用 |
 | 二进制命令 | `install` / `service` 不能通过 `node dist/...` 或 tsx 使用 |
 

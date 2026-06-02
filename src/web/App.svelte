@@ -25,6 +25,7 @@
 
   let HistoryRoute = $state<Component | null>(null);
   let PublishRoute = $state<Component | null>(null);
+  let UsersRoute = $state<Component | null>(null);
 
   onMount(() => {
     void checkAuth();
@@ -39,6 +40,9 @@
     });
     void import('./routes/Publish.svelte').then((m) => {
       PublishRoute = m.default;
+    });
+    void import('./routes/Users.svelte').then((m) => {
+      UsersRoute = m.default;
     });
   });
 </script>
@@ -74,6 +78,12 @@
 {:else if current.name === 'publish'}
   {#if PublishRoute}
     <PublishRoute />
+  {:else}
+    <main class="boot">加载中…</main>
+  {/if}
+{:else if current.name === 'users'}
+  {#if UsersRoute}
+    <UsersRoute />
   {:else}
     <main class="boot">加载中…</main>
   {/if}

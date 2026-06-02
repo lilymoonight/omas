@@ -1,8 +1,9 @@
 <script lang="ts">
   import { apiBase } from '../lib/api.js';
-  import { checkAuth } from '../lib/stores.js';
+  import { checkAuth, multiUser } from '../lib/stores.js';
   import Icon from '../components/Icon.svelte';
 
+  let username = $state('');
   let password = $state('');
   let submitting = $state(false);
   let error = $state<string | null>(null);
@@ -13,16 +14,18 @@
     submitting = true;
     error = null;
     try {
+      const body: Record<string, string> = { password };
+      if ($multiUser) body.username = username.trim();
       const res = await fetch(apiBase + 'auth/login', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify(body),
       });
       if (res.status === 429) {
         error = '尝试次数过多，请稍后再试';
       } else if (res.status === 401) {
-        error = '密码错误';
+        error = $multiUser ? '用户名或密码错误' : '密码错误';
       } else if (!res.ok) {
         error = `登录失败（${res.status}）`;
       } else {
@@ -47,15 +50,31 @@
       </div>
     </div>
 
+    {#if $multiUser}
+      <label class="field">
+        <span class="label-text">用户名</span>
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          type="text"
+          autocomplete="username"
+          placeholder="请输入用户名"
+          bind:value={username}
+          disabled={submitting}
+          autofocus
+        />
+      </label>
+    {/if}
+
     <label class="field">
       <span class="label-text">密码</span>
+      <!-- svelte-ignore a11y_autofocus -->
       <input
         type="password"
         autocomplete="current-password"
         placeholder="请输入登录密码"
         bind:value={password}
         disabled={submitting}
-        autofocus
+        autofocus={!$multiUser}
       />
     </label>
 
@@ -63,7 +82,7 @@
       <p class="error"><Icon name="alert" size={14} /> {error}</p>
     {/if}
 
-    <button class="primary submit" type="submit" disabled={submitting || !password}>
+    <button class="primary submit" type="submit" disabled={submitting || !password || ($multiUser && !username.trim())}>
       {#if submitting}
         <Icon name="refresh" size={14} />
         登录中…

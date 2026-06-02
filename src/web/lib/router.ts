@@ -13,6 +13,7 @@ export type Route =
   | { name: 'shared'; token: string }
   | { name: 'history' }
   | { name: 'publish' }
+  | { name: 'users' }
   | { name: 'login' };
 
 function parse(hash: string): Route {
@@ -21,6 +22,7 @@ function parse(hash: string): Route {
   if (h === '/login') return { name: 'login' };
   if (h === '/history') return { name: 'history' };
   if (h === '/publish') return { name: 'publish' };
+  if (h === '/users') return { name: 'users' };
   const shared = /^\/shared\/([A-Za-z0-9_-]+)$/.exec(h);
   if (shared) return { name: 'shared', token: shared[1]! };
   const m = /^\/s\/([A-Za-z0-9_-]+)$/.exec(h);
@@ -40,6 +42,7 @@ export function navigate(to: Route): void {
   else if (to.name === 'login') hash = '#/login';
   else if (to.name === 'history') hash = '#/history';
   else if (to.name === 'publish') hash = '#/publish';
+  else if (to.name === 'users') hash = '#/users';
   if (window.location.hash !== hash) {
     window.location.hash = hash;
   }

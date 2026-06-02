@@ -1,8 +1,17 @@
 #!/usr/bin/env node
+// Privilege-dropped fs worker mode (Model B). Gated BEFORE commander so a
+// re-exec of this same binary becomes a one-shot filesystem helper that drops to
+// the target UNIX user. See pty/fs-worker.ts.
+if (process.env.OMAS_FS_WORKER === '1') {
+  const { runFsWorker } = await import('./pty/fs-worker.js');
+  await runFsWorker(); // never returns (process.exit)
+}
+
 import { Command } from 'commander';
 import { createServer } from './server.js';
 import { logger } from './logger.js';
 import { runInit, runPasswd } from './cli/init.js';
+import { runUserAdd, runUserList, runUserPasswd, runUserRemove } from './cli/users.js';
 import { runInstall } from './cli/install.js';
 import { runConnect } from './cli/connect.js';
 import { runExec, runUpload, runDownload } from './cli/agent.js';
@@ -126,6 +135,7 @@ program
   .option('-l, --list', '列出远程会话后退出')
   .option('--shell <shell>', '新会话使用的 Shell')
   .option('--cwd <dir>', '新会话的工作目录')
+  .option('-u, --user <name>', '登录用户名（多用户服务需要；也可用 OMAS_USER）')
   .option('--password <pw>', '登录密码（也可用 OMAS_PASSWORD 或交互输入）')
   .option('--insecure', '跳过 TLS 证书校验（自签名证书时使用）')
   .addHelpText(
@@ -147,6 +157,7 @@ program
         list: opts.list,
         shell: opts.shell,
         cwd: opts.cwd,
+        user: opts.user,
         password: opts.password,
         insecure: opts.insecure,
       });
@@ -163,6 +174,7 @@ function addRemoteOpts(cmd: Command): Command {
     .option('--cwd <dir>', '工作区目录（临时会话的工作目录；沙箱开启时必须在 sandbox-root 内）')
     .option('--no-sandbox', '创建非沙箱会话（全盘可写，需配合 --bypass 口令）')
     .option('--bypass <pw>', '解除沙箱口令（仅配合 --no-sandbox；也可用 OMAS_BYPASS）')
+    .option('-u, --user <name>', '登录用户名（多用户服务需要；也可用 OMAS_USER）')
     .option('--password <pw>', '登录密码（也可用 OMAS_PASSWORD 或交互输入）')
     .option('--insecure', '跳过 TLS 证书校验（自签名证书时使用）');
 }
@@ -175,6 +187,7 @@ function remoteOptsFrom(url: string, opts: any) {
     // commander maps --no-sandbox to opts.sandbox === false
     noSandbox: opts.sandbox === false,
     bypass: opts.bypass ?? process.env.OMAS_BYPASS,
+    user: opts.user,
     password: opts.password,
     insecure: opts.insecure,
   };
@@ -287,6 +300,81 @@ program
   )
   .action(async (opts) => {
     await runPasswd({ configDir: opts.configDir, bypass: opts.bypass });
+  });
+
+const user = program
+  .command('user')
+  .summary('管理登录账户（多用户）')
+  .description(
+    [
+      '管理 users.json 里的登录账户。每个账户用 omas 自管的密码（argon2id）登录，',
+      '可选映射到一个真实 UNIX 用户（osUser）——开启后会话以该系统用户身份运行，',
+      '靠操作系统权限隔离（需服务以 root 运行）。改动后需重启服务生效。',
+    ].join('\n'),
+  )
+  .addHelpText(
+    'after',
+    `
+子命令:
+  add <用户名>     新增账户（交互输入密码）
+  ls               列出账户
+  passwd <用户名>  修改某账户密码
+  rm <用户名>      删除账户
+
+示例:
+  omas user add alice                          # 普通账户（首个账户自动为 admin）
+  omas user add bob --os-user deploy           # 映射到已存在的 UNIX 用户 deploy
+  sudo omas user add carol --create-os-user    # 代建 UNIX 用户 carol（仅 Linux）
+  omas user ls
+  omas user rm bob                             # 仅删账户，保留 OS 用户
+  sudo omas user rm carol --purge-os-user      # 同时删除 omas 代建的 OS 用户与家目录
+`.trim(),
+  );
+
+user
+  .command('add <username>')
+  .summary('新增登录账户')
+  .option('--config-dir <dir>', '配置目录（默认 ~/.config/oh-my-agent-shell）')
+  .option('--role <role>', '账户角色 admin|user（默认：首个账户 admin，其余 user）')
+  .option('--os-user <name>', '映射到已存在的 UNIX 用户，会话以其身份运行（需 root）')
+  .option('--create-os-user', '代建一个 UNIX 用户（仅 Linux；名字同 --os-user 或同用户名）')
+  .option('--shell <path>', '代建 UNIX 用户的登录 Shell')
+  .action(async (username, opts) => {
+    await runUserAdd({
+      username,
+      configDir: opts.configDir,
+      role: opts.role,
+      osUser: opts.osUser,
+      createOsUser: opts.createOsUser,
+      shell: opts.shell,
+    });
+  });
+
+user
+  .command('ls')
+  .alias('list')
+  .summary('列出登录账户')
+  .option('--config-dir <dir>', '配置目录（默认 ~/.config/oh-my-agent-shell）')
+  .action(async (opts) => {
+    await runUserList({ configDir: opts.configDir });
+  });
+
+user
+  .command('passwd <username>')
+  .summary('修改某账户密码')
+  .option('--config-dir <dir>', '配置目录（默认 ~/.config/oh-my-agent-shell）')
+  .action(async (username, opts) => {
+    await runUserPasswd({ username, configDir: opts.configDir });
+  });
+
+user
+  .command('rm <username>')
+  .alias('remove')
+  .summary('删除登录账户')
+  .option('--config-dir <dir>', '配置目录（默认 ~/.config/oh-my-agent-shell）')
+  .option('--purge-os-user', '同时删除由 omas 代建的 UNIX 用户及其家目录（危险，仅 Linux）')
+  .action(async (username, opts) => {
+    await runUserRemove({ username, configDir: opts.configDir, purgeOsUser: opts.purgeOsUser });
   });
 
 program

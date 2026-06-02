@@ -1,16 +1,23 @@
 import { writable } from 'svelte/store';
 import type { Session } from '../../shared/session.js';
-import { api, apiBase } from './api.js';
+import { api, apiBase, type UserPublic } from './api.js';
 import { sessionsEqual } from './stable-update.js';
 import { backgroundPollWanted } from './notifications.js';
 
 export type AuthState = 'unknown' | 'in' | 'out';
 export const auth = writable<AuthState>('unknown');
 
+/** Logged-in account (multi-user mode), or null in open/single-user mode. */
+export const currentUser = writable<UserPublic | null>(null);
+/** True when the server has named accounts (login requires a username). */
+export const multiUser = writable<boolean>(false);
+
 export async function checkAuth(): Promise<void> {
   try {
     const res = await fetch(apiBase + 'auth/me', { credentials: 'same-origin' });
     const data = await res.json();
+    multiUser.set(!!data.multiUser);
+    currentUser.set(data.user ?? null);
     if (data.authRequired === false) {
       auth.set('in');
       return;
@@ -18,6 +25,7 @@ export async function checkAuth(): Promise<void> {
     auth.set(data.loggedIn ? 'in' : 'out');
   } catch {
     auth.set('out');
+    currentUser.set(null);
   }
 }
 

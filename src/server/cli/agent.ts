@@ -25,6 +25,7 @@ export type AgentOpts = {
   sandbox?: boolean;
   noSandbox?: boolean;
   bypass?: string;
+  user?: string;
   password?: string;
   insecure?: boolean;
 };

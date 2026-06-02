@@ -54,6 +54,7 @@ A self-hosted web terminal for AI-assisted development. Not an agent, not an IDE
 
 - **Single binary** — four-architecture releases (linux / darwin × x64 / arm64), no native deps (password hashing uses Bun's built-in argon2id).
 - **Password & daemon** — `omas init` (persisted argon2id password), `omas service install` (launchd / systemd background daemon — agents survive browser close).
+- **Multi-user (OS-level, optional)** — host multiple login accounts (app-managed argon2id passwords, independent of system passwords), each mapped to a real UNIX user; when the server runs as root, sessions / Git / file operations **drop privileges to that UNIX user**, with isolation enforced by kernel file permissions. Regular users see only their own sessions; admins see all. Manage via `omas user add/ls/passwd/rm` or the web "Users" page; on Linux + root omas can provision UNIX users, on macOS it maps to existing ones. Existing single-password setups migrate transparently to an `admin` account.
 - **Reverse-proxy friendly** — adapts to reverse-proxy prefixes, WebSocket, HTTPS (see [DEPLOY.md](./DEPLOY.md)).
 
 ## Quick start

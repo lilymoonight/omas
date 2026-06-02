@@ -201,7 +201,7 @@ omas service install    # 关键：Agent 不随浏览器关闭而停
 | 限制 | 说明 |
 |------|------|
 | 不是 IDE | 无 LSP、无多文件 refactor、不适合大段手写代码 |
-| 单用户 | 一个密码；非多租户 |
+| 用户模型 | 单用户（一个密码）或可选 OS 级多用户（详见 MANUAL.md） |
 | 恢复 = 自动输入命令 | 等价于在 PTY 里打字 resume，非 API 绑定 |
 | 前台 omas 退出 | PTY 会结束；长跑 Agent 请用 service |
 | 只读扫描历史 | 不修改 Claude/Cursor 数据目录 |

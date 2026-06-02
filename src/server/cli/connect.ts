@@ -17,6 +17,7 @@ export type ConnectOpts = {
   list?: boolean;
   shell?: string;
   cwd?: string;
+  user?: string;
   password?: string;
   insecure?: boolean;
 };
@@ -46,6 +47,31 @@ function termSize(): { cols: number; rows: number } {
     cols: process.stdout.columns ?? 80,
     rows: process.stdout.rows ?? 24,
   };
+}
+
+/** Read a single line (echoed) from the TTY — used for the username prompt. */
+function promptLine(prompt: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const stdin = process.stdin;
+    if (!stdin.isTTY) {
+      reject(new Error('没有可交互的终端来输入用户名；请用 --user 或设置 OMAS_USER'));
+      return;
+    }
+    process.stdout.write(prompt);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+    let buf = '';
+    const onData = (d: string): void => {
+      buf += d;
+      const nl = buf.indexOf('\n');
+      if (nl >= 0) {
+        stdin.off('data', onData);
+        stdin.pause();
+        resolve(buf.slice(0, nl).replace(/\r$/, '').trim());
+      }
+    };
+    stdin.on('data', onData);
+  });
 }
 
 /** Read a password from the TTY without echoing it. */
@@ -110,22 +136,29 @@ export function authHeaders(cookie: string, json = false): Record<string, string
   return h;
 }
 
-export async function authenticate(base: Base, opts: { password?: string }): Promise<string> {
+export async function authenticate(base: Base, opts: { password?: string; user?: string }): Promise<string> {
   const meRes = await fetch(`${base.http}/api/auth/me`);
   if (!meRes.ok) throw new Error(`无法连接到 ${base.label}（HTTP ${meRes.status}）`);
-  const me = (await meRes.json()) as { authRequired?: boolean };
+  const me = (await meRes.json()) as { authRequired?: boolean; multiUser?: boolean };
   if (!me.authRequired) return '';
+
+  // Multi-user servers need a username. Use --user/OMAS_USER, else prompt.
+  let username = opts.user ?? process.env.OMAS_USER ?? '';
+  if (!username && me.multiUser) username = await promptLine(`omas 用户名（${base.label}）: `);
 
   let password = opts.password ?? process.env.OMAS_PASSWORD ?? '';
   if (!password) password = await promptPassword(`omas 密码（${base.label}）: `);
 
+  const body: Record<string, string> = { password };
+  if (username) body.username = username;
   const res = await fetch(`${base.http}/api/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ password }),
+    body: JSON.stringify(body),
   });
   if (res.status === 429) throw new Error('登录被限流，请稍后再试');
-  if (!res.ok) throw new Error('密码错误');
+  if (res.status === 400) throw new Error('需要用户名：请用 --user 指定账户');
+  if (!res.ok) throw new Error('用户名或密码错误');
   const cookie = readSessionCookie(res.headers);
   if (!cookie) throw new Error('登录成功但服务器未返回会话 cookie');
   return cookie;

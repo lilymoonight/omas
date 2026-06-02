@@ -54,6 +54,7 @@
 
 - **单文件二进制** — 四架构 Release（linux / darwin × x64 / arm64），无 native 依赖（密码哈希用 Bun 内置 argon2id）。
 - **密码与常驻** — `omas init`（argon2id 持久化密码）、`omas service install`（launchd / systemd 后台常驻，关浏览器 Agent 也继续跑）。
+- **多用户（OS 级，可选）** — 可托管多个登录账号（应用层 argon2id 密码，独立于系统密码），每个账号映射到一个真实 UNIX 用户；服务以 root 运行时，会话 / Git / 文件操作**降权到该 UNIX 用户**，由内核文件权限做隔离。普通用户只见自己的会话，管理员可见全部。`omas user add/ls/passwd/rm` 或网页「用户管理」页管理；Linux + root 下可代建 UNIX 用户，macOS 仅映射已有用户。原单密码部署自动迁移为 `admin` 账号、行为不变。
 - **反代友好** — 自适应反向代理前缀、WebSocket、HTTPS（见 [DEPLOY.md](./DEPLOY.md)）。
 
 ## 快速开始

@@ -34,6 +34,12 @@ export type Session = {
    * apart multiple agents started from the same default directory.
    */
   liveCwd?: string | null;
+  /** Owning account id (multi-user). Empty/undefined in open/single-user mode. */
+  owner?: string;
+  /** Owning account's username, resolved for display (list/get endpoints). */
+  ownerName?: string | null;
+  /** UNIX user the session runs as (Model B), or null when it runs as the server. */
+  osUser?: string | null;
 };
 
 export type AgentKey = 'claude' | 'cursor' | 'qoder';

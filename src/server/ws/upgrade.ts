@@ -10,12 +10,14 @@ const SESSION_RE = /^\/api\/sessions\/([A-Za-z0-9_-]+)\/attach(?:\?(.*))?$/;
 const SHARED_RE = /^\/api\/shared\/([A-Za-z0-9_-]+)\/attach(?:\?(.*))?$/;
 
 type UpgradeAuthCheck = (req: IncomingMessage) => boolean;
+type UpgradeAttachCheck = (req: IncomingMessage, session: { owner: string }) => boolean;
 
 export function installWsUpgrade(
   rawServer: { on: (event: 'upgrade', cb: (req: IncomingMessage, socket: Socket, head: Buffer) => void) => unknown },
   hub: SessionHub,
   isAuthed: UpgradeAuthCheck = () => true,
   shares?: ShareStore,
+  canAttach: UpgradeAttachCheck = () => true,
 ): void {
   const wss = new WebSocketServer({ noServer: true });
 
@@ -62,6 +64,13 @@ export function installWsUpgrade(
     }
     const session = hub.get(sessionId);
     if (!session) {
+      socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    // Ownership: a logged-in non-owner is treated as if the session doesn't exist.
+    // Read-only share attach is exempt (authorized by its token above).
+    if (!readOnly && !canAttach(req, session)) {
       socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
       socket.destroy();
       return;

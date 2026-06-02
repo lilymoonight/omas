@@ -2,6 +2,8 @@ import { randomBytes } from 'node:crypto';
 
 export type AuthSession = {
   sid: string;
+  /** The logged-in user's id (UserStore record id). Empty in open mode. */
+  userId: string;
   createdAt: number;
   lastSeenAt: number;
 };
@@ -17,10 +19,10 @@ export class CookieSessionStore {
     this.gcTimer.unref?.();
   }
 
-  create(): string {
+  create(userId = ''): string {
     const sid = randomBytes(32).toString('base64url');
     const now = Date.now();
-    this.map.set(sid, { sid, createdAt: now, lastSeenAt: now });
+    this.map.set(sid, { sid, userId, createdAt: now, lastSeenAt: now });
     return sid;
   }
 
@@ -34,6 +36,18 @@ export class CookieSessionStore {
     }
     s.lastSeenAt = now;
     return true;
+  }
+
+  /** The user id bound to a session (after a successful `touch`), or undefined. */
+  userIdFor(sid: string): string | undefined {
+    return this.map.get(sid)?.userId;
+  }
+
+  /** Drop every session belonging to a user (e.g. when the account is removed). */
+  destroyForUser(userId: string): void {
+    for (const [sid, s] of this.map) {
+      if (s.userId === userId) this.map.delete(sid);
+    }
   }
 
   destroy(sid: string): void {

@@ -8,6 +8,7 @@ import { logger } from './logger.js';
 import { SessionHub } from './pty/hub.js';
 import { ensureReady as ensurePtyBackendReady } from './pty/backend.js';
 import { registerSessionRoutes } from './routes/sessions.js';
+import { registerUserRoutes } from './routes/users.js';
 import { registerDirRoutes } from './routes/dirs.js';
 import { registerSystemRoutes } from './routes/system.js';
 import { registerGitRoutes } from './routes/git-status.js';
@@ -17,10 +18,12 @@ import { registerShareRoutes } from './routes/share.js';
 import { ShareStore } from './share/store.js';
 import { registerHistoryRoutes } from './history/index.js';
 import { installWsUpgrade } from './ws/upgrade.js';
-import { loadConfig, resolveConfigDir, isAuthRequired, type Config } from './config.js';
+import { loadConfig, resolveConfigDir, type Config } from './config.js';
 import { CookieSessionStore } from './auth/sessions.js';
 import { LoginLimiter } from './auth/limiter.js';
-import { registerAuthRoutes, makeAuthGuard, isAuthedFromRawHeaders } from './auth/routes.js';
+import { registerAuthRoutes, makeAuthGuard, isAuthedFromRawHeaders, authRequiredFor, userForRawHeaders } from './auth/routes.js';
+import { UserStore, migrateLegacyPassword } from './auth/users.js';
+import { makeAuthContext, canAccess } from './auth/context.js';
 import { autoInitConfig } from './auth/auto-init.js';
 import { resolveDefaultCwd } from './pty/default-cwd.js';
 import { UploadStore } from './pty/upload-store.js';
@@ -113,20 +116,47 @@ export async function createServer(config: ServerConfig) {
     }
   }
 
+  // Account registry (multi-user). Migrate a legacy single login password into an
+  // `admin` account so existing deployments transparently gain a named user.
+  const users = new UserStore(dir);
+  users.load();
+  if (migrateLegacyPassword(users, cfg.passwordHash, process.env.OMAS_ADMIN_USER || 'admin')) {
+    // Only persist when config is disk-backed; a memory-only password must not
+    // be written to disk as a users.json hash the operator didn't ask to persist.
+    if (diskBacked) users.save();
+    logger.info({ username: users.list()[0]?.username }, 'migrated login password into an admin account');
+  }
+
   const app = Fastify({ loggerInstance: logger, disableRequestLogging: true, trustProxy: true });
   await app.register(fastifyCookie, { secret: cfg.cookieSecret });
 
   const store = new CookieSessionStore();
   const limiter = new LoginLimiter();
 
-  registerAuthRoutes(app, { config: cfg, store, limiter });
-  app.addHook('preHandler', makeAuthGuard(cfg, store));
+  registerAuthRoutes(app, { users, store, limiter });
+  app.addHook('preHandler', makeAuthGuard(users, store));
 
   const hub = new SessionHub({
     maxSessions: config.maxSessions,
     scrollbackBytes: config.scrollbackBytes,
     defaultShell: config.shell,
     defaultCwd,
+  });
+
+  const authCtx = makeAuthContext(users, store);
+  // Central ownership guard: any /api/sessions/:id[/...] route the caller doesn't
+  // own (and isn't admin for) returns 404 — enforced once here rather than in
+  // each of the ~18 per-session handlers. Runs after the auth guard (401 first).
+  const SESSION_ID_RE = /^\/api\/sessions\/([A-Za-z0-9_-]+)(?:[/?]|$)/;
+  app.addHook('preHandler', async (req: any, reply: any) => {
+    if (!authCtx.authRequired()) return;
+    const m = SESSION_ID_RE.exec(req.url ?? '');
+    if (!m) return; // list/create (no id) handled in the route itself
+    const session = hub.get(m[1]!);
+    if (!session) return; // let the handler emit its normal 404
+    if (!canAccess(session.owner, authCtx.userFor(req), true)) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
   });
 
   app.get('/api/health', async () => ({
@@ -155,7 +185,8 @@ export async function createServer(config: ServerConfig) {
   const uploads = new UploadStore();
   const shares = new ShareStore();
 
-  registerSessionRoutes(app, hub, { sandbox, config: cfg, limiter });
+  registerSessionRoutes(app, hub, { sandbox, config: cfg, limiter, auth: authCtx });
+  registerUserRoutes(app, { users, store, auth: authCtx });
   registerDirRoutes(app);
   registerSystemRoutes(app);
   registerGitRoutes(app, hub);
@@ -166,8 +197,9 @@ export async function createServer(config: ServerConfig) {
   installWsUpgrade(
     app.server,
     hub,
-    (req) => !isAuthRequired(cfg) || isAuthedFromRawHeaders(req, store),
+    (req) => !authRequiredFor(users) || isAuthedFromRawHeaders(req, store),
     shares,
+    (req, session) => canAccess(session.owner, userForRawHeaders(req, store, users), authRequiredFor(users)),
   );
 
   // Public, no-auth static sites (/p/<slug>/). Persistent entries live in

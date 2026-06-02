@@ -44,7 +44,7 @@ export async function runPasswd(opts: { configDir?: string; bypass?: boolean }):
   console.log('password updated. existing logged-in sessions will keep working until they expire.');
 }
 
-async function readPasswordTwice(message = 'new password (min 6 chars)'): Promise<string> {
+export async function readPasswordTwice(message = 'new password (min 6 chars)'): Promise<string> {
   if (!process.stdin.isTTY) {
     console.error('init/passwd require a TTY for interactive password entry');
     process.exit(2);

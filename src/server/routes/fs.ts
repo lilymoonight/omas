@@ -1,7 +1,5 @@
 import fs from 'node:fs';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { SessionHub } from '../pty/hub.js';
 import type { UploadStore } from '../pty/upload-store.js';
@@ -11,15 +9,21 @@ import {
   MAX_REQUEST_BYTES,
   MAX_UPLOAD_BYTES,
   UPLOAD_CHUNK_BYTES,
-  clampUtf8,
   looksBinary,
   relFromAbs,
   resolveUnderCwd,
   sessionCwd,
-  uniqueName,
-  writeBufferAtomic,
-  writeFileAtomic,
 } from '../pty/fs-util.js';
+import {
+  fsStat,
+  fsReaddir,
+  fsRead,
+  fsWriteText,
+  fsUpload,
+  spawnAsUser,
+  chownToUser,
+} from '../pty/fs-priv.js';
+import type { OsUserInfo } from '../pty/os-user.js';
 
 type App = {
   get: (path: string, handler: (req: any, reply: any) => any) => unknown;
@@ -72,20 +76,24 @@ function safeBasename(name: string): string | null {
   return base;
 }
 
-async function ensureDir(reply: any, cwd: string, relDir: string) {
+async function ensureDir(reply: any, osUser: OsUserInfo | null, cwd: string, relDir: string) {
   const dir = resolveUnderCwd(cwd, relDir);
   if ('error' in dir) {
     reply.code(400).send({ error: dir.error });
     return null;
   }
   try {
-    const st = await fsp.stat(dir.abs);
-    if (!st.isDirectory()) {
+    const st = await fsStat(osUser, dir.abs);
+    if (!st.exists) {
+      reply.code(404).send({ error: 'dir_not_found' });
+      return null;
+    }
+    if (!st.isDir) {
       reply.code(400).send({ error: 'not_a_directory' });
       return null;
     }
   } catch (err: any) {
-    if (err?.code === 'ENOENT') reply.code(404).send({ error: 'dir_not_found' });
+    if (err?.code === 'EACCES') reply.code(403).send({ error: 'permission_denied' });
     else reply.code(500).send({ error: 'stat_failed', message: String(err?.message ?? err) });
     return null;
   }
@@ -121,17 +129,16 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     const cwd = await sessionCwd(session);
     if (!cwd) return reply.code(404).send({ error: 'no_cwd' });
 
-    const dir = await ensureDir(reply, cwd, parsed.data.dir ?? '');
+    const dir = await ensureDir(reply, session.osUserInfo, cwd, parsed.data.dir ?? '');
     if (!dir) return reply;
 
     try {
-      const finalAbs = await uniqueName(dir.abs, base);
-      await writeBufferAtomic(finalAbs, body);
+      const { finalAbs, size } = await fsUpload(session.osUserInfo, dir.abs, base, body);
       return {
         ok: true,
         path: relFromAbs(cwd, finalAbs),
         name: path.basename(finalAbs),
-        size: body.length,
+        size,
       };
     } catch (err: any) {
       if (err?.code === 'EACCES') return reply.code(403).send({ error: 'permission_denied' });
@@ -155,7 +162,7 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     const cwd = await sessionCwd(session);
     if (!cwd) return reply.code(404).send({ error: 'no_cwd' });
 
-    const dir = await ensureDir(reply, cwd, parsed.data.dir ?? '');
+    const dir = await ensureDir(reply, session.osUserInfo, cwd, parsed.data.dir ?? '');
     if (!dir) return reply;
 
     try {
@@ -211,6 +218,13 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
 
     try {
       const res = await uploads.finish(rec);
+      // Chunked staging is written by the (root) server; hand the finished file
+      // to the session's UNIX user so they own what they uploaded (Model B).
+      if (session.osUserInfo) {
+        try {
+          await chownToUser(session.osUserInfo, path.join(rec.dirAbs, res.name));
+        } catch { /* best-effort: file exists, ownership fix-up failed */ }
+      }
       return { ok: true, ...res };
     } catch (err: any) {
       if (err?.code === 'EACCES') return reply.code(403).send({ error: 'permission_denied' });
@@ -247,18 +261,19 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     if ('error' in resolved) return reply.code(400).send({ error: resolved.error });
 
     try {
-      const stat = await fsp.stat(resolved.abs);
-      if (!stat.isDirectory()) return reply.code(400).send({ error: 'not_a_directory' });
+      const stat = await fsStat(session.osUserInfo, resolved.abs);
+      if (!stat.exists) return reply.code(404).send({ error: 'not_found' });
+      if (!stat.isDir) return reply.code(400).send({ error: 'not_a_directory' });
 
-      const dirents = await fsp.readdir(resolved.abs, { withFileTypes: true });
+      const { entries: dirents, truncated: workerTruncated } = await fsReaddir(session.osUserInfo, resolved.abs);
       dirents.sort((a, b) => {
-        const ad = a.isDirectory() ? 0 : 1;
-        const bd = b.isDirectory() ? 0 : 1;
+        const ad = a.isDir ? 0 : 1;
+        const bd = b.isDir ? 0 : 1;
         if (ad !== bd) return ad - bd;
         return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
       });
 
-      let truncated = false;
+      let truncated = workerTruncated;
       const entries: FsEntry[] = [];
       for (const d of dirents) {
         if (d.name === '.omas.tmp' || d.name.startsWith('.omas.tmp.')) continue;
@@ -268,9 +283,9 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
         }
         const abs = resolved.abs + '/' + d.name;
         const rel = relFromAbs(cwd, abs);
-        if (d.isDirectory()) {
+        if (d.isDir) {
           entries.push({ name: d.name, path: rel, kind: 'dir' });
-        } else if (d.isFile()) {
+        } else if (d.isFile) {
           entries.push({ name: d.name, path: rel, kind: 'file' });
         }
       }
@@ -297,14 +312,12 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     if ('error' in resolved) return reply.code(400).send({ error: resolved.error });
 
     try {
-      const stat = await fsp.stat(resolved.abs);
-      if (!stat.isFile()) return reply.code(400).send({ error: 'not_a_file' });
-      const raw = await fsp.readFile(resolved.abs);
-      if (looksBinary(raw)) {
-        return { path: resolved.rel, binary: true, clipped: false, size: raw.length };
-      }
-      const { text, clipped } = clampUtf8(raw.toString('utf8'), MAX_EDIT_BYTES);
-      return { path: resolved.rel, content: text, clipped, binary: false, size: raw.length };
+      const stat = await fsStat(session.osUserInfo, resolved.abs);
+      if (!stat.exists) return reply.code(404).send({ error: 'not_found' });
+      if (!stat.isFile) return reply.code(400).send({ error: 'not_a_file' });
+      const r = await fsRead(session.osUserInfo, resolved.abs);
+      if (r.binary) return { path: resolved.rel, binary: true, clipped: false, size: r.size };
+      return { path: resolved.rel, content: r.content, clipped: r.clipped, binary: false, size: r.size };
     } catch (err: any) {
       if (err?.code === 'ENOENT') return reply.code(404).send({ error: 'not_found' });
       if (err?.code === 'EACCES') return reply.code(403).send({ error: 'permission_denied' });
@@ -326,21 +339,21 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     const resolved = resolveUnderCwd(cwd, relPath);
     if ('error' in resolved) return reply.code(400).send({ error: resolved.error });
 
-    let stat: fs.Stats;
+    let stat: { exists: boolean; isFile: boolean; isDir: boolean; size: number };
     try {
-      stat = await fsp.stat(resolved.abs);
+      stat = await fsStat(session.osUserInfo, resolved.abs);
     } catch (err: any) {
-      if (err?.code === 'ENOENT') return reply.code(404).send({ error: 'not_found' });
       if (err?.code === 'EACCES') return reply.code(403).send({ error: 'permission_denied' });
       return reply.code(500).send({ error: 'stat_failed', message: String(err?.message ?? err) });
     }
+    if (!stat.exists) return reply.code(404).send({ error: 'not_found' });
 
-    if (stat.isDirectory()) {
+    if (stat.isDir) {
       const baseName = path.basename(resolved.abs) || 'root';
       const parent = path.dirname(resolved.abs);
-      const child = spawn('tar', ['-czf', '-', '-C', parent, baseName], {
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
+      // tar runs as the session's UNIX user (Model B) so it only archives files
+      // that user can read.
+      const child = spawnAsUser(session.osUserInfo, 'tar', ['-czf', '-', '-C', parent, baseName]);
       let failed = false;
       child.on('error', (err) => {
         failed = true;
@@ -356,12 +369,21 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
       return reply.send(child.stdout);
     }
 
-    if (!stat.isFile()) return reply.code(400).send({ error: 'not_a_file' });
+    if (!stat.isFile) return reply.code(400).send({ error: 'not_a_file' });
 
     reply.header('content-type', 'application/octet-stream');
     reply.header('content-length', String(stat.size));
     reply.header('content-disposition', contentDisposition(path.basename(resolved.abs)));
     reply.header('cache-control', 'no-store');
+    // For an OS-user session, stream the bytes via a privilege-dropped `cat` so
+    // the read is performed as that user; otherwise read directly (root/single).
+    if (session.osUserInfo) {
+      const child = spawnAsUser(session.osUserInfo, 'cat', ['--', resolved.abs]);
+      child.on('error', () => {
+        if (!reply.sent) reply.code(500).send({ error: 'read_failed' });
+      });
+      return reply.send(child.stdout);
+    }
     return reply.send(fs.createReadStream(resolved.abs));
   });
 
@@ -385,8 +407,7 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     }
 
     try {
-      await writeFileAtomic(resolved.abs, parsed.data.content);
-      const size = Buffer.byteLength(parsed.data.content, 'utf8');
+      const { size } = await fsWriteText(session.osUserInfo, resolved.abs, parsed.data.content);
       return { ok: true, path: resolved.rel, size };
     } catch (err: any) {
       if (err?.code === 'EACCES') return reply.code(403).send({ error: 'permission_denied' });

@@ -1,13 +1,24 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import type { SessionHub } from '../pty/hub.js';
 import type { PtySession } from '../pty/session.js';
 import { shellCwd } from '../pty/shell-cwd.js';
+import { wrapAsUser, fsStat, fsRead, fsWriteText } from '../pty/fs-priv.js';
+import type { OsUserInfo } from '../pty/os-user.js';
 
 const exec = promisify(execFile);
+
+/** Run git, dropping to the session's UNIX user when set (Model B). */
+function gitExec(
+  osUser: OsUserInfo | null,
+  args: string[],
+  opts: { cwd: string; timeout: number; maxBuffer: number },
+) {
+  const w = wrapAsUser(osUser, 'git', args);
+  return exec(w.file, w.args, { cwd: opts.cwd, timeout: opts.timeout, maxBuffer: opts.maxBuffer, env: w.env });
+}
 
 type App = {
   get: (path: string, handler: (req: any, reply: any) => any) => unknown;
@@ -25,9 +36,9 @@ const writeSchema = z.object({
   content: z.string().max(MAX_EDIT_BYTES),
 });
 
-async function gitTopLevel(cwd: string): Promise<string | null> {
+async function gitTopLevel(cwd: string, osUser: OsUserInfo | null): Promise<string | null> {
   try {
-    const { stdout } = await exec('git', ['rev-parse', '--show-toplevel'], { cwd, timeout: 2000 });
+    const { stdout } = await gitExec(osUser, ['rev-parse', '--show-toplevel'], { cwd, timeout: 2000, maxBuffer: 1 << 20 });
     return stdout.trim();
   } catch {
     return null;
@@ -48,7 +59,7 @@ function clampUtf8(s: string, max: number): { text: string; clipped: boolean } {
 
 async function resolveRepoFile(session: PtySession, relPath: string) {
   const cwd = (await shellCwd(session.pid)) ?? session.cwd;
-  const root = await gitTopLevel(cwd);
+  const root = await gitTopLevel(cwd, session.osUserInfo);
   if (!root) return { error: 'not_a_repo' as const };
   const abs = path.resolve(root, relPath);
   if (!abs.startsWith(root + path.sep) && abs !== root) {
@@ -57,19 +68,21 @@ async function resolveRepoFile(session: PtySession, relPath: string) {
   return { root, abs, opts: { cwd: root, timeout: 5000, maxBuffer: MAX_EDIT_BYTES * 2 } };
 }
 
-async function readWorktreeContent(abs: string, relPath: string, opts: { cwd: string; timeout: number; maxBuffer: number }) {
+async function readWorktreeContent(
+  osUser: OsUserInfo | null,
+  abs: string,
+  relPath: string,
+  opts: { cwd: string; timeout: number; maxBuffer: number },
+) {
   try {
-    const stat = await fsp.stat(abs);
-    if (!stat.isFile()) return { error: 'not_a_file' as const };
-    const raw = await fsp.readFile(abs);
-    if (looksBinary(raw)) {
-      return { kind: 'binary' as DiffKind, binary: true, clipped: false, size: raw.length };
-    }
-    const { text, clipped } = clampUtf8(raw.toString('utf8'), MAX_EDIT_BYTES);
-    return { kind: 'content' as DiffKind, content: text, clipped, binary: false, size: raw.length };
+    const st = await fsStat(osUser, abs);
+    if (!st.exists || !st.isFile) throw new Error('not_a_worktree_file');
+    const r = await fsRead(osUser, abs);
+    if (r.binary) return { kind: 'binary' as DiffKind, binary: true, clipped: false, size: r.size };
+    return { kind: 'content' as DiffKind, content: r.content, clipped: r.clipped, binary: false, size: r.size };
   } catch {
     try {
-      const { stdout } = await exec('git', ['show', `HEAD:${relPath}`], opts);
+      const { stdout } = await gitExec(osUser, ['show', `HEAD:${relPath}`], opts);
       const { text, clipped } = clampUtf8(stdout, MAX_EDIT_BYTES);
       return { kind: 'content' as DiffKind, content: text, clipped, binary: false, size: stdout.length };
     } catch {
@@ -78,11 +91,8 @@ async function readWorktreeContent(abs: string, relPath: string, opts: { cwd: st
   }
 }
 
-async function writeWorktreeContent(abs: string, content: string): Promise<void> {
-  await fsp.mkdir(path.dirname(abs), { recursive: true });
-  const tmp = `${abs}.omas.tmp.${process.pid}`;
-  await fsp.writeFile(tmp, content, 'utf8');
-  await fsp.rename(tmp, abs);
+async function writeWorktreeContent(osUser: OsUserInfo | null, abs: string, content: string): Promise<void> {
+  await fsWriteText(osUser, abs, content);
 }
 
 export function registerGitFileRoutes(app: App, hub: SessionHub): void {
@@ -103,9 +113,9 @@ export function registerGitFileRoutes(app: App, hub: SessionHub): void {
     const { abs, opts } = resolved;
 
     if (view === 'content') {
-      const result = await readWorktreeContent(abs, relPath, opts);
+      const result = await readWorktreeContent(session.osUserInfo, abs, relPath, opts);
       if ('error' in result) {
-        return reply.code(result.error === 'not_a_file' ? 400 : 404).send({ error: result.error });
+        return reply.code(404).send({ error: result.error });
       }
       if (result.kind === 'binary') {
         return { path: relPath, kind: 'binary' as DiffKind, binary: true, clipped: false, size: result.size };
@@ -117,7 +127,7 @@ export function registerGitFileRoutes(app: App, hub: SessionHub): void {
       const args = staged
         ? ['diff', '--cached', 'HEAD', '--', relPath]
         : ['diff', 'HEAD', '--', relPath];
-      const { stdout } = await exec('git', args, opts);
+      const { stdout } = await gitExec(session.osUserInfo, args, opts);
       if (stdout.length > 0) {
         const { text, clipped } = clampUtf8(stdout, MAX_DIFF_BYTES);
         return { path: relPath, kind: 'diff' as DiffKind, diff: text, clipped, binary: false, size: stdout.length };
@@ -127,17 +137,18 @@ export function registerGitFileRoutes(app: App, hub: SessionHub): void {
     }
 
     try {
-      const stat = await fsp.stat(abs);
-      if (!stat.isFile()) return reply.code(400).send({ error: 'not_a_file' });
-      const raw = await fsp.readFile(abs);
-      if (looksBinary(raw)) {
-        return { path: relPath, kind: 'binary' as DiffKind, binary: true, clipped: false, size: raw.length };
+      const st = await fsStat(session.osUserInfo, abs);
+      if (!st.exists) throw new Error('missing');
+      if (!st.isFile) return reply.code(400).send({ error: 'not_a_file' });
+      const r = await fsRead(session.osUserInfo, abs);
+      if (r.binary) {
+        return { path: relPath, kind: 'binary' as DiffKind, binary: true, clipped: false, size: r.size };
       }
-      const { text, clipped } = clampUtf8(raw.toString('utf8'), MAX_CONTENT_BYTES);
-      return { path: relPath, kind: 'untracked' as DiffKind, content: text, clipped, binary: false, size: raw.length };
+      const { text, clipped } = clampUtf8(r.content ?? '', MAX_CONTENT_BYTES);
+      return { path: relPath, kind: 'untracked' as DiffKind, content: text, clipped, binary: false, size: r.size };
     } catch {
       try {
-        const { stdout } = await exec('git', ['show', `HEAD:${relPath}`], opts);
+        const { stdout } = await gitExec(session.osUserInfo, ['show', `HEAD:${relPath}`], opts);
         const { text, clipped } = clampUtf8(stdout, MAX_CONTENT_BYTES);
         return { path: relPath, kind: 'deleted' as DiffKind, content: text, clipped, binary: false, size: stdout.length };
       } catch {
@@ -169,7 +180,7 @@ export function registerGitFileRoutes(app: App, hub: SessionHub): void {
     }
 
     try {
-      await writeWorktreeContent(resolved.abs, parsed.data.content);
+      await writeWorktreeContent(session.osUserInfo, resolved.abs, parsed.data.content);
       const size = Buffer.byteLength(parsed.data.content, 'utf8');
       return { ok: true, path: relPath, size };
     } catch (err: any) {

@@ -6,6 +6,8 @@ import { resolveSandboxDir, type SandboxSettings } from '../pty/sandbox.js';
 import { verifyPassword } from '../auth/password.js';
 import type { LoginLimiter } from '../auth/limiter.js';
 import type { Config } from '../config.js';
+import { canAccess, type AuthContext } from '../auth/context.js';
+import { serverIsRoot, resolveOsUser, type OsUserInfo } from '../pty/os-user.js';
 // Loose Fastify shape so we don't fight generics with whatever loggerInstance the caller used.
 type App = {
   get: (path: string, handler: (req: any, reply: any) => any) => unknown;
@@ -34,6 +36,8 @@ export type SessionRouteOpts = {
   config?: Config | null;
   /** Reused per-IP limiter to throttle bypass-password guesses. */
   limiter?: LoginLimiter;
+  /** Identity/ownership helpers; absent → open mode (no ownership). */
+  auth?: AuthContext;
 };
 
 const patchSchema = z.object({
@@ -67,8 +71,12 @@ function contentDisposition(name: string): string {
 
 export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRouteOpts = {}): void {
   const sandboxCfg = opts.sandbox ?? null;
-  app.get('/api/sessions', async () => {
-    const list = hub.list();
+  const auth = opts.auth;
+  app.get('/api/sessions', async (req: any) => {
+    const authRequired = auth?.authRequired() ?? false;
+    const viewer = authRequired ? auth!.userFor(req) : null;
+    // Non-admins only see their own sessions; open/single mode sees all.
+    const list = hub.list().filter((s) => canAccess(s.owner, viewer, authRequired));
     const pids = list.map((s) => s.pid);
     const [fg, cwds] = await Promise.all([
       foregroundForPids(pids),
@@ -82,6 +90,7 @@ export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRo
         agent: info?.agent ?? null,
         agentState: info?.agentState ?? null,
         liveCwd: s.pid != null ? cwds.get(s.pid) ?? null : null,
+        ownerName: s.owner ? auth?.usernameFor(s.owner) ?? null : null,
       };
     });
   });
@@ -91,10 +100,30 @@ export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRo
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
     const { sandbox: wantSandboxRaw, bypass, ...createInput } = parsed.data;
 
+    // Model B: if the logged-in account maps to a UNIX user, the session runs as
+    // that user. This needs root (to drop privileges); refuse loudly otherwise so
+    // we never silently run a "user" session as the server's own (root) identity.
+    const appUser = auth?.authRequired() ? auth.userFor(req) : null;
+    let osUser: OsUserInfo | undefined;
+    if (appUser?.osUser) {
+      if (!serverIsRoot()) {
+        return reply.code(503).send({
+          error: 'os_user_unavailable',
+          message: `account is mapped to UNIX user '${appUser.osUser}' but the server is not running as root`,
+        });
+      }
+      try {
+        osUser = await resolveOsUser(appUser.osUser);
+      } catch (err) {
+        return reply.code(500).send({ error: 'os_user_lookup_failed', message: (err as Error).message });
+      }
+    }
+
     // Resolve the sandbox decision. When the server has no sandbox policy at all,
     // behavior is unchanged: every session is a normal, unconfined shell.
+    // OS-user sessions skip the sandbox entirely — OS permissions do the isolation.
     let sandbox: SandboxSettings | undefined;
-    if (sandboxCfg) {
+    if (sandboxCfg && !osUser) {
       const wantSandbox = wantSandboxRaw ?? sandboxCfg.defaultOn;
       if (wantSandbox) {
         // Confine to the requested cwd, which must live within the sandbox root.
@@ -132,8 +161,12 @@ export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRo
       }
     }
 
+    // Stamp ownership so the session is only visible/attachable to its creator
+    // (and admins). Empty in open mode.
+    const owner = appUser?.id ?? '';
+
     try {
-      const s = hub.create({ ...createInput, sandbox });
+      const s = hub.create({ ...createInput, sandbox, owner, osUser });
       return reply.code(201).send(s.toJSON());
     } catch (err) {
       if (err instanceof HubError) return reply.code(err.status).send({ error: err.code, message: err.message });
@@ -153,6 +186,7 @@ export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRo
       agent: info?.agent ?? null,
       agentState: info?.agentState ?? null,
       liveCwd: liveCwd ?? null,
+      ownerName: s.owner ? auth?.usernameFor(s.owner) ?? null : null,
     };
   });
 

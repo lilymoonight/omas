@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { sessions, startSessionPolling, stopSessionPolling, refreshSessions, checkAuth } from '../lib/stores.js';
+  import { sessions, startSessionPolling, stopSessionPolling, refreshSessions, checkAuth, currentUser, multiUser } from '../lib/stores.js';
   import { api, apiBase, type PublicSite } from '../lib/api.js';
   import { themePref, cycleTheme, THEME_LABEL } from '../lib/theme.js';
   import {
@@ -46,7 +46,16 @@
   let grouped = $state(readGrouped());
   let collapsed = $state(readCollapsed());
 
-  const groups = $derived(groupSessionsByProject($sessions));
+  const me = $derived($currentUser);
+  const isAdmin = $derived(me?.role === 'admin');
+  // Admins receive every owner's sessions from the server; let them narrow to
+  // just their own. Regular users only ever get their own list back.
+  let scope = $state<'mine' | 'all'>('all');
+  const scopedSessions = $derived(
+    isAdmin && scope === 'mine' && me ? $sessions.filter((s) => s.owner === me.id) : $sessions,
+  );
+
+  const groups = $derived(groupSessionsByProject(scopedSessions));
 
   function toggleGrouped() {
     grouped = !grouped;
@@ -187,9 +196,15 @@
       <span class="logo"><Icon name="terminal" size={18} /></span>
       <div>
         <div class="title">会话</div>
-        <div class="subtitle">共 {$sessions.length} 个</div>
+        <div class="subtitle">共 {scopedSessions.length} 个</div>
       </div>
     </div>
+    {#if isAdmin && $multiUser}
+      <div class="scope" role="group" aria-label="会话范围">
+        <button class="scope-btn" class:active={scope === 'mine'} onclick={() => (scope = 'mine')}>我的</button>
+        <button class="scope-btn" class:active={scope === 'all'} onclick={() => (scope = 'all')}>全部</button>
+      </div>
+    {/if}
     <button
       class="ghost icon-only"
       class:notify-on={grouped}
@@ -246,6 +261,19 @@
       <Icon name="clock" size={16} />
       <span>历史</span>
     </button>
+    {#if isAdmin}
+      <button class="ghost" title="用户管理" onclick={() => navigate({ name: 'users' })}>
+        <Icon name="users" size={16} />
+        <span>用户</span>
+      </button>
+    {/if}
+    {#if me}
+      <span class="me" title={`已登录：${me.username}${me.osUser ? ` · UNIX ${me.osUser}` : ''}`}>
+        <Icon name="user" size={14} />
+        <span class="me-name">{me.username}</span>
+        {#if me.role === 'admin'}<span class="me-role">管理员</span>{/if}
+      </span>
+    {/if}
     <button class="ghost" title="退出登录" aria-label="退出登录" onclick={logout}>
       <Icon name="log-out" size={16} />
       <span>退出</span>
@@ -348,6 +376,12 @@
           <span class="chip" title="使用的 shell">{s.shell.split('/').pop()}</span>
           <span class="chip" title="终端尺寸">{s.cols} × {s.rows}</span>
           <span class="chip" title={s.lastActivityAt}>活跃于 {fmtAgo(s.lastActivityAt)}</span>
+          {#if isAdmin && s.ownerName}
+            <span class="chip chip-owner" title={`所属用户：${s.ownerName}${s.osUser ? ` · UNIX ${s.osUser}` : ''}`}>
+              <Icon name="user" size={12} />
+              {s.ownerName}
+            </span>
+          {/if}
           {#if s.clientCount > 0}
             <span class="chip chip-accent" title="当前已连接的浏览器数量">
               <Icon name="users" size={12} />
@@ -367,7 +401,7 @@
     </li>
   {/snippet}
 
-  {#if $sessions.length === 0}
+  {#if scopedSessions.length === 0}
     <div class="empty">
       <span class="empty-icon"><Icon name="monitor" size={28} /></span>
       <h3>暂无会话</h3>
@@ -415,7 +449,7 @@
     </div>
   {:else}
     <ul class="grid">
-      {#each $sessions as s (s.id)}
+      {#each scopedSessions as s (s.id)}
         {@render card(s)}
       {/each}
     </ul>
@@ -455,6 +489,39 @@
   .subtitle { color: var(--fg-muted); font-size: 12px; margin-top: 1px; }
 
   .notify-on { color: var(--accent); background: var(--accent-soft); }
+
+  .scope {
+    display: inline-flex;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    gap: 2px;
+  }
+  .scope-btn {
+    border: none; background: none; cursor: pointer;
+    color: var(--fg-muted);
+    font-size: 12px; font-weight: 600;
+    padding: 3px 12px;
+    border-radius: calc(var(--radius-sm) - 2px);
+  }
+  .scope-btn:hover { color: var(--fg); }
+  .scope-btn.active { background: var(--bg-elev); color: var(--accent); box-shadow: var(--shadow-sm); }
+
+  .me {
+    display: inline-flex; align-items: center; gap: 5px;
+    color: var(--fg-muted);
+    font-size: 12.5px;
+    padding: 4px 6px;
+  }
+  .me-name { color: var(--fg); font-weight: 600; }
+  .me-role {
+    background: var(--accent-soft); color: var(--accent);
+    border-radius: 999px; padding: 1px 7px;
+    font-size: 10px; font-weight: 700;
+  }
+  .chip-owner { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+  .chip-owner > :global(svg) { flex-shrink: 0; }
 
   .error {
     display: inline-flex; align-items: center; gap: 6px;

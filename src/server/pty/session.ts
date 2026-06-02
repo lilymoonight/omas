@@ -18,6 +18,7 @@ type SerializeAddon = InstanceType<typeof SerializeAddon>;
 import { RingBuffer } from './ring.js';
 import { ptyLocaleEnv } from './locale.js';
 import { resolveSandboxDir, buildSandboxCommand, type SandboxSettings } from './sandbox.js';
+import { buildPrivilegeDrop, type OsUserInfo } from './os-user.js';
 import fs from 'node:fs';
 import type { Session } from '../../shared/session.js';
 
@@ -34,6 +35,14 @@ export type PtySessionOpts = {
   scrollbackBytes: number;
   /** Auto-typed once the shell is up (e.g. `claude --resume <id>`). */
   initialCommand?: string;
+  /** Owning account id (UserStore id). Empty string in open/single-user mode. */
+  owner?: string;
+  /**
+   * When set, the session is launched as this real UNIX user (Model B,
+   * OS-level multi-user). Requires the server to run as root. Mutually
+   * exclusive with `sandbox` — OS filesystem permissions do the isolation.
+   */
+  osUser?: OsUserInfo;
   /**
    * When set, the shell is wrapped in bubblewrap: the whole filesystem is
    * read-only except `cwd` (which must already be validated to live inside
@@ -67,6 +76,10 @@ function pickShell(explicit?: string): string {
 
 export class PtySession extends EventEmitter {
   readonly id = nanoid(10);
+  /** Owning account id (UserStore id); '' in open/single-user mode. */
+  readonly owner: string;
+  /** Target UNIX user the shell runs as (Model B); '' when run as the server. */
+  readonly osUser: string;
   readonly shell: string;
   readonly cwd: string;
   /** True when the shell is confined by bubblewrap (read-only FS outside cwd). */
@@ -74,6 +87,9 @@ export class PtySession extends EventEmitter {
   /** Resolved sandbox parameters (canonical paths), kept so `exec()` can reuse
    *  the exact same confinement as the interactive shell. */
   private readonly sandboxSpec: { writable: string; home: string; tmp: string; net: boolean } | null;
+  /** Resolved target UNIX user (Model B), or null. Used by `exec` and the
+   *  privilege-dropped fs/git paths. */
+  readonly osUserInfo: OsUserInfo | null;
   readonly ring: RingBuffer;
   readonly createdAt = new Date();
   readonly clients = new Set<symbol>();
@@ -99,6 +115,7 @@ export class PtySession extends EventEmitter {
 
   constructor(opts: PtySessionOpts) {
     super();
+    this.owner = opts.owner ?? '';
     this.shell = pickShell(opts.shell);
     // Default to server's startup cwd — for the agent-development workflow,
     // you cd into your project then launch oh-my-agent-shell and want sessions
@@ -137,9 +154,29 @@ export class PtySession extends EventEmitter {
       spawnArgs = cmd.args;
       spawnEnv = cmd.env;
     } else {
-      this.cwd = requestedCwd;
+      // For OS-user sessions, default to the target user's home (root may own
+      // the server's cwd; the user might not be able to reach it).
+      this.cwd = opts.cwd ?? opts.osUser?.home ?? requestedCwd;
       this.sandboxed = false;
       this.sandboxSpec = null;
+    }
+
+    // Model B: drop privileges to the target UNIX user. Wraps whatever command
+    // we resolved above and overrides the identity env so the user's own shell
+    // config/credentials are used.
+    this.osUser = opts.osUser?.name ?? '';
+    this.osUserInfo = opts.osUser ?? null;
+    if (opts.osUser) {
+      const drop = buildPrivilegeDrop(process.platform, opts.osUser, spawnFile, spawnArgs);
+      spawnFile = drop.file;
+      spawnArgs = drop.args;
+      spawnEnv = {
+        ...spawnEnv,
+        HOME: opts.osUser.home,
+        USER: opts.osUser.name,
+        LOGNAME: opts.osUser.name,
+        SHELL: opts.osUser.shell,
+      };
     }
     this.cols = opts.cols;
     this.rows = opts.rows;
@@ -234,6 +271,18 @@ export class PtySession extends EventEmitter {
     } else {
       file = '/bin/sh';
       args = ['-c', command];
+    }
+
+    // Model B: run the one-shot as the target UNIX user too, mirroring the live
+    // shell. OS permissions confine it (no sandbox for cross-user sessions).
+    if (this.osUserInfo) {
+      const drop = buildPrivilegeDrop(process.platform, this.osUserInfo, file, args);
+      file = drop.file;
+      args = drop.args;
+      env.HOME = this.osUserInfo.home;
+      env.USER = this.osUserInfo.name;
+      env.LOGNAME = this.osUserInfo.name;
+      env.SHELL = this.osUserInfo.shell;
     }
 
     return new Promise((resolve) => {
@@ -449,6 +498,8 @@ export class PtySession extends EventEmitter {
       exitCode: this.exitCode,
       exitSignal: this.exitSignal,
       sandboxed: this.sandboxed,
+      owner: this.owner || undefined,
+      osUser: this.osUser || null,
     };
   }
 }

@@ -215,6 +215,20 @@ function uploadFile(id: string, file: File, opts: UploadOpts = {}): Promise<FsUp
   return file.size > CHUNK_THRESHOLD ? uploadChunked(id, file, opts) : uploadSingle(id, file, opts);
 }
 
+export type UserRole = 'admin' | 'user';
+export type UserPublic = { id: string; username: string; role: UserRole; osUser: string | null; managed?: boolean };
+export type MeResp = { authRequired: boolean; loggedIn: boolean; user: UserPublic | null; multiUser?: boolean };
+export type UsersResp = { users: UserPublic[]; provisionable: boolean; isRoot: boolean };
+export type CreateUserInput = {
+  username: string;
+  password: string;
+  role?: UserRole;
+  osUser?: string;
+  createOsUser?: boolean;
+  shell?: string;
+};
+export type UpdateUserInput = { password?: string; role?: UserRole; osUser?: string | null };
+
 export type SandboxRuntime =
   | { enabled: false }
   | { enabled: true; root: string; net: boolean; defaultOn: boolean; bypassAvailable: boolean };
@@ -226,6 +240,15 @@ let runtimePromise: Promise<RuntimeInfo> | null = null;
 
 export const api = {
   health: () => req<{ ok: boolean; uptime: number; sessions: number }>('GET', 'health'),
+  me: () => req<MeResp>('GET', 'auth/me'),
+  listUsers: () => req<UsersResp>('GET', 'users'),
+  createUser: (input: CreateUserInput) => req<UserPublic>('POST', 'users', input),
+  updateUser: (id: string, patch: UpdateUserInput) => req<UserPublic>('PATCH', `users/${encodeURIComponent(id)}`, patch),
+  deleteUser: (id: string, purgeOsUser = false) =>
+    req<{ ok: true; purged: boolean | 'unmanaged' | 'unsupported' }>(
+      'DELETE',
+      `users/${encodeURIComponent(id)}${purgeOsUser ? '?purgeOsUser=true' : ''}`,
+    ),
   runtime: () => req<RuntimeInfo>('GET', 'runtime'),
   // Runtime config (sandbox policy, default cwd) only changes on a server
   // restart — which drops this SPA's sockets anyway — so memoize it for the
