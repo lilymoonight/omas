@@ -4,6 +4,18 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.7.0] - 2026-06-04
+
+### 新增
+
+- **config.json 为唯一事实来源（host / port / 沙箱）**：`config.json` 新增 `host`、`port`；`omas init` 交互或 flags 持久化密码、监听地址、沙箱根目录、默认 cwd；`serve` 与 `createServer` 按 **CLI > config > 默认(127.0.0.1/7681)** 解析绑定地址；`service install` **默认不再**把 host/port 写死进 unit，仅 `serve --config-dir …`（显式 `--host/--port` 仍可烘焙进 unit）。
+- **沙箱会话 Agent 免确认 shortcut**：沙箱内自动为 **Claude**（`--dangerously-skip-permissions`）、**Cursor**（`agent` / `cursor-agent` 的 `--yolo`）、**Qoder**（`qodercli` / `qoder` 的 `--yolo`）注入权限跳过参数；通过 `.omas-agent-rc` 静默加载 alias，并作用于 `initialCommand` 与 `omas exec`。
+- **Linux root 服务下 bwrap 降 uid**：root 启动时 bwrap 加 `--unshare-user --uid/--gid`（优先 `SUDO_UID/GID`，否则 1000），避免 Claude 等 agent 拒绝以 root 运行。
+
+### 修复
+
+- **Claude 空闲时光标闪烁导致视口「锁在底部」**：Claude TUI 在 alternate screen 上时，用户上滚看 scrollback 后，idle 光标重绘仍会 `scrollToBottom` 把视图拽回实时 prompt。现 **尊重 `userScrolledUp`（含 alt screen）**、已在底部时跳过重复 scroll、并监听 `onScroll` 识别拖滚动条；不影响 Claude 实际输出与输入。
+
 ## [1.6.1] - 2026-06-04
 
 ### 修复
