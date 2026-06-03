@@ -67,9 +67,11 @@ describe('classifyAgent', () => {
     expect(classifyAgent('node /usr/local/lib/node_modules/@anthropic/claude/cli.js')).toBe('claude');
   });
 
-  it('recognizes cursor-agent (not bare cursor editor)', () => {
+  it('recognizes cursor-agent and bare agent (not bare cursor editor)', () => {
     expect(classifyAgent('cursor-agent --resume xyz')).toBe('cursor');
     expect(classifyAgent('node /opt/cursor-agent/bin.js')).toBe('cursor');
+    expect(classifyAgent('agent --resume xyz')).toBe('cursor');
+    expect(classifyAgent('node agent --resume xyz')).toBe('cursor');
   });
 
   it('recognizes qoder (qodercli binary or informal name)', () => {

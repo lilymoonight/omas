@@ -55,8 +55,8 @@ program
   .command('serve', { isDefault: true })
   .summary('启动 Web 终端服务')
   .description(SERVE_DESCRIPTION)
-  .option('-p, --port <port>', '监听端口', '7681')
-  .option('-h, --host <host>', '监听地址（公网请用 0.0.0.0 且前置 TLS 代理）', '127.0.0.1')
+  .option('-p, --port <port>', '监听端口（默认读 config.json，未设则 7681）')
+  .option('-h, --host <host>', '监听地址（默认读 config.json，未设则 127.0.0.1；公网请用 0.0.0.0 且前置 TLS 代理）')
   .option('--shell <shell>', '新会话默认 Shell（默认 $SHELL → /bin/bash → /bin/sh）')
   .option('--cwd <dir>', '新会话默认工作目录（也可用 OMAS_CWD 或 config.json 的 defaultCwd）')
   .option('--config-dir <dir>', '配置目录（默认 ~/.config/oh-my-agent-shell）')
@@ -99,9 +99,9 @@ program
 `.trim(),
   )
   .action(async (opts) => {
-    const { app } = await createServer({
+    const { app, host, port } = await createServer({
       host: opts.host,
-      port: parseInt(opts.port, 10),
+      port: opts.port != null ? parseInt(opts.port, 10) : undefined,
       shell: opts.shell,
       cwd: opts.cwd,
       configDir: opts.configDir,
@@ -115,7 +115,7 @@ program
       sandboxNet: opts.sandboxNoNet ? false : undefined,
       sandboxDefault: opts.sandboxDefaultOff ? false : undefined,
     });
-    const addr = await app.listen({ host: opts.host, port: parseInt(opts.port, 10) });
+    const addr = await app.listen({ host, port });
     logger.info({ addr }, 'omas listening');
   });
 
@@ -279,13 +279,39 @@ addRemoteOpts(
 
 program
   .command('init')
-  .summary('初始化登录密码配置文件')
+  .summary('初始化配置文件（密码 + 监听地址 + 沙箱等）')
   .description(INIT_DESCRIPTION)
   .option('--config-dir <dir>', '配置目录（默认 ~/.config/oh-my-agent-shell）')
   .option('--force', '覆盖已存在的 config.json')
-  .addHelpText('after', '示例: omas init\n        omas init --config-dir /var/lib/omas/config --force')
+  .option('-p, --port <port>', '持久化监听端口（serve / service 都会读取）')
+  .option('-h, --host <host>', '持久化监听地址')
+  .option('--cwd <dir>', '持久化新会话默认工作目录（defaultCwd）')
+  .option('--sandbox-root <dir>', '持久化沙箱可写根目录（开启沙箱）')
+  .option('--sandbox-no-net', '沙箱会话断网（持久化 sandbox.net=false）')
+  .option('--sandbox-default-off', '新会话默认不沙箱（持久化 sandbox.default=false）')
+  .option('-y, --yes', '跳过交互提示，仅持久化命令行传入的设置')
+  .addHelpText(
+    'after',
+    `示例:
+  omas init                                  # 交互式：密码 + host/port + 沙箱
+  omas init -y --port 8080 --sandbox-root /srv/agent
+  omas init --config-dir /var/lib/omas/config --force
+
+init 后 config.json 即为唯一事实来源：之后 \`omas serve\` 与 \`omas service install\`
+都无需再带 --port / --host / --sandbox-root，全部从 config 读取（命令行仍可临时覆盖）。`,
+  )
   .action(async (opts) => {
-    await runInit({ configDir: opts.configDir, force: opts.force });
+    await runInit({
+      configDir: opts.configDir,
+      force: opts.force,
+      port: opts.port != null ? parseInt(opts.port, 10) : undefined,
+      host: opts.host,
+      cwd: opts.cwd,
+      sandboxRoot: opts.sandboxRoot,
+      sandboxNet: opts.sandboxNoNet ? false : undefined,
+      sandboxDefault: opts.sandboxDefaultOff ? false : undefined,
+      yes: opts.yes,
+    });
   });
 
 program
@@ -429,8 +455,8 @@ service
   .command('install')
   .summary('注册并启动后台服务')
   .description(SERVICE_INSTALL_DESCRIPTION)
-  .option('-p, --port <port>', '监听端口', '7681')
-  .option('-h, --host <host>', '监听地址', '127.0.0.1')
+  .option('-p, --port <port>', '监听端口（默认读 config.json，未设则 7681）')
+  .option('-h, --host <host>', '监听地址（默认读 config.json，未设则 127.0.0.1）')
   .option('--config-dir <dir>', '配置目录（默认 ~/.config/oh-my-agent-shell）')
   .option('--cwd <dir>', '新会话默认工作目录')
   .option('--binary <path>', '要运行的 omas 路径（默认：当前可执行文件）')
@@ -455,7 +481,7 @@ service
     }
     runServiceInstall({
       host: opts.host,
-      port: parseInt(opts.port, 10),
+      port: opts.port != null ? parseInt(opts.port, 10) : undefined,
       configDir: opts.configDir,
       cwd: opts.cwd,
       binary: opts.binary,

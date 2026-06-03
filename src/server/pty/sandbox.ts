@@ -13,7 +13,10 @@
 //
 // Two backends, picked by platform:
 //   - Linux  → bubblewrap (`bwrap`): rebinds `/` read-only, then the working dir
-//     and home read-write, with a private tmpfs /tmp.
+//     and home read-write, with a private tmpfs /tmp. When the server runs as
+//     root, the sandbox additionally remaps to a non-root uid (a fresh user
+//     namespace) so agents that refuse to run as root (e.g. `claude
+//     --dangerously-skip-permissions`) still work — see sandboxUnprivIds().
 //   - macOS  → `sandbox-exec` (Seatbelt): a `(deny default)(allow file-read*)`
 //     profile that permits file-write* under the working dir, home, and /dev.
 //
@@ -77,6 +80,17 @@ export function buildBwrapArgv(opts: {
   /** setsid() for TIOCSTI-injection hardening. Off by default: it detaches the
    *  controlling tty, which can break interactive job control over a PTY. */
   newSession?: boolean;
+  /**
+   * When set, run inside a fresh user namespace mapped to this uid/gid instead of
+   * keeping the caller's id. Used when the omas server runs as ROOT: without it
+   * the sandboxed process keeps uid 0, which trips tools that refuse to run as
+   * root (e.g. `claude --dangerously-skip-permissions`). Root creates the userns
+   * directly, so this works even where unprivileged user namespaces are disabled;
+   * root-owned paths (the writable dir, HOME, the tmpfs /tmp) remain writable as
+   * they map to this id. Leave undefined when the server is already unprivileged.
+   */
+  unprivUid?: number;
+  unprivGid?: number;
 }): string[] {
   const args: string[] = [
     '--ro-bind', '/', '/', // entire filesystem, read-only
@@ -91,6 +105,11 @@ export function buildBwrapArgv(opts: {
     '--setenv', 'HOME', opts.home,
     '--die-with-parent',
   ];
+  // Drop the in-namespace identity off root so agents that refuse to run as root
+  // work. Requires our own user namespace (root maps its uid 0 → this id).
+  if (opts.unprivUid != null && opts.unprivGid != null) {
+    args.push('--unshare-user', '--uid', String(opts.unprivUid), '--gid', String(opts.unprivGid));
+  }
   for (const dev of opts.devBinds ?? []) args.push('--dev-bind', dev, dev);
   if (!opts.net) args.push('--unshare-net');
   if (opts.newSession) args.push('--new-session');
@@ -160,7 +179,18 @@ export type SandboxCommand = { file: string; args: string[]; env: Record<string,
  */
 export function buildSandboxCommand(
   platform: NodeJS.Platform,
-  opts: { writable: string; home: string; tmp: string; net: boolean; shell: string; shellArgs?: string[] },
+  opts: {
+    writable: string;
+    home: string;
+    tmp: string;
+    net: boolean;
+    shell: string;
+    shellArgs?: string[];
+    /** Linux only: remap the sandboxed process to this non-root id (set when the
+     *  server runs as root, so agents that refuse root still work). */
+    unprivUid?: number;
+    unprivGid?: number;
+  },
 ): SandboxCommand {
   if (platform === 'darwin') {
     const profile = buildSeatbeltProfile({ writable: opts.writable, home: opts.home, net: opts.net });
@@ -182,9 +212,29 @@ export function buildSandboxCommand(
       net: opts.net,
       shell: opts.shell,
       shellArgs: opts.shellArgs,
+      unprivUid: opts.unprivUid,
+      unprivGid: opts.unprivGid,
     }),
     env: { HOME: opts.home },
   };
+}
+
+/**
+ * Pick the non-root uid/gid to remap a sandboxed session to when the server runs
+ * as root (Linux). Prefers the human behind `sudo` (SUDO_UID/GID); falls back to
+ * 1000 (the conventional first real user). Returns null when not applicable
+ * (non-root server, or non-Linux) so the sandbox keeps the caller's identity.
+ */
+export function sandboxUnprivIds(
+  platform: NodeJS.Platform = process.platform,
+): { uid: number; gid: number } | null {
+  if (platform !== 'linux') return null;
+  if (typeof process.getuid !== 'function' || process.getuid() !== 0) return null;
+  const su = Number(process.env.SUDO_UID);
+  const sg = Number(process.env.SUDO_GID);
+  const uid = Number.isInteger(su) && su > 0 ? su : 1000;
+  const gid = Number.isInteger(sg) && sg > 0 ? sg : uid;
+  return { uid, gid };
 }
 
 /** True when a sandbox backend is available to actually enforce confinement. */

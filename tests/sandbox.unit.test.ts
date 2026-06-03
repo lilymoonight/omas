@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveSandboxDir, buildBwrapArgv, buildSeatbeltProfile, buildSandboxCommand } from '../src/server/pty/sandbox.js';
+import { resolveSandboxDir, buildBwrapArgv, buildSeatbeltProfile, buildSandboxCommand, sandboxUnprivIds } from '../src/server/pty/sandbox.js';
 
 describe('resolveSandboxDir', () => {
   const root = '/srv/agent';
@@ -79,6 +79,52 @@ describe('buildBwrapArgv', () => {
   it('adds --new-session only when opted in', () => {
     expect(buildBwrapArgv({ ...base, net: true }).join(' ')).not.toContain('--new-session');
     expect(buildBwrapArgv({ ...base, net: true, newSession: true }).join(' ')).toContain('--new-session');
+  });
+
+  it('remaps to a non-root uid/gid (own user namespace) only when requested', () => {
+    expect(buildBwrapArgv({ ...base, net: true }).join(' ')).not.toContain('--unshare-user');
+    const a = buildBwrapArgv({ ...base, net: true, unprivUid: 1000, unprivGid: 1000 });
+    const joined = a.join(' ');
+    expect(joined).toContain('--unshare-user');
+    expect(joined).toContain('--uid 1000');
+    expect(joined).toContain('--gid 1000');
+    // The remap flags must precede the `--` shell separator.
+    expect(a.indexOf('--uid')).toBeLessThan(a.indexOf('--'));
+  });
+});
+
+describe('sandboxUnprivIds', () => {
+  it('returns null on non-linux platforms', () => {
+    expect(sandboxUnprivIds('darwin')).toBeNull();
+  });
+
+  it('returns null on linux when the server is not root', () => {
+    const realGetuid = process.getuid;
+    try {
+      (process as any).getuid = () => 1000;
+      expect(sandboxUnprivIds('linux')).toBeNull();
+    } finally {
+      (process as any).getuid = realGetuid;
+    }
+  });
+
+  it('prefers SUDO_UID/GID, falling back to 1000, when linux + root', () => {
+    const realGetuid = process.getuid;
+    const { SUDO_UID, SUDO_GID } = process.env;
+    try {
+      (process as any).getuid = () => 0;
+      process.env.SUDO_UID = '1234';
+      process.env.SUDO_GID = '5678';
+      expect(sandboxUnprivIds('linux')).toEqual({ uid: 1234, gid: 5678 });
+
+      delete process.env.SUDO_UID;
+      delete process.env.SUDO_GID;
+      expect(sandboxUnprivIds('linux')).toEqual({ uid: 1000, gid: 1000 });
+    } finally {
+      (process as any).getuid = realGetuid;
+      if (SUDO_UID === undefined) delete process.env.SUDO_UID; else process.env.SUDO_UID = SUDO_UID;
+      if (SUDO_GID === undefined) delete process.env.SUDO_GID; else process.env.SUDO_GID = SUDO_GID;
+    }
   });
 });
 

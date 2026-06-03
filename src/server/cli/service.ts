@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
-import { resolveConfigDir } from '../config.js';
+import { resolveConfigDir, loadConfig } from '../config.js';
 import { resolveUtf8Locale } from '../pty/locale.js';
 import { requireSingleBinary } from './shared.js';
 
@@ -28,8 +28,10 @@ export type ServiceUninstallOpts = {
 
 export type ServiceUnitOpts = {
   binary: string;
-  host: string;
-  port: number;
+  /** Bake --host into the unit. Omitted → daemon reads host from config.json. */
+  host?: string;
+  /** Bake --port into the unit. Omitted → daemon reads port from config.json. */
+  port?: number;
   configDir: string;
   cwd?: string;
   scope: ServiceScope;
@@ -68,13 +70,12 @@ function launchdPlistPath(): string {
 }
 
 export function renderSystemdUnit(opts: ServiceUnitOpts): string {
-  const execParts = [
-    shellQuote(opts.binary),
-    'serve',
-    '--host', shellQuote(opts.host),
-    '--port', String(opts.port),
-    '--config-dir', shellQuote(opts.configDir),
-  ];
+  // Only bake host/port when explicitly given; otherwise the daemon reads them
+  // from config.json (single source of truth set by `omas init`).
+  const execParts = [shellQuote(opts.binary), 'serve'];
+  if (opts.host) execParts.push('--host', shellQuote(opts.host));
+  if (opts.port != null) execParts.push('--port', String(opts.port));
+  execParts.push('--config-dir', shellQuote(opts.configDir));
   if (opts.cwd) execParts.push('--cwd', shellQuote(opts.cwd));
   const exec = execParts.join(' ');
 
@@ -102,13 +103,10 @@ WantedBy=${wantedBy}
 }
 
 export function renderLaunchdPlist(opts: Omit<ServiceUnitOpts, 'scope'>): string {
-  const args = [
-    opts.binary,
-    'serve',
-    '--host', opts.host,
-    '--port', String(opts.port),
-    '--config-dir', opts.configDir,
-  ];
+  const args = [opts.binary, 'serve'];
+  if (opts.host) args.push('--host', opts.host);
+  if (opts.port != null) args.push('--port', String(opts.port));
+  args.push('--config-dir', opts.configDir);
   if (opts.cwd) args.push('--cwd', opts.cwd);
   const argsXml = args.map((a) => `\n      <string>${escapeXml(a)}</string>`).join('');
   const logDir = path.join(os.tmpdir(), 'omas');
@@ -180,13 +178,20 @@ export function runServiceInstall(opts: ServiceInstallOpts): void {
     process.exit(1);
   }
 
-  const host = opts.host ?? '127.0.0.1';
-  const port = opts.port ?? 7681;
+  // Host/port are NOT defaulted here: when the operator doesn't pass them, we
+  // leave them out of the unit so the daemon reads them from config.json (set by
+  // `omas init`). Passing --host/--port still bakes an override into the unit.
+  const host = opts.host;
+  const port = opts.port;
   const configDir = resolveConfigDir(opts.configDir);
   const scope = opts.scope ?? defaultScope();
   const kind = platformKind();
 
   ensureConfigHint(configDir);
+  // Effective port for the "open http://…" hint: explicit flag, else persisted
+  // config, else the serve default.
+  const cfg = loadConfig(configDir);
+  const effectivePort = port ?? cfg?.port ?? 7681;
 
   if (kind === 'linux') {
     const unitPath = systemdUnitPath(scope);
@@ -217,7 +222,7 @@ export function runServiceInstall(opts: ServiceInstallOpts): void {
         return;
       }
       console.log(`started ${SERVICE_NAME} (${scope} service)`);
-      printSystemdStatus(scope, port);
+      printSystemdStatus(scope, effectivePort);
     } else {
       printSystemdManual(scope, 'enable --now');
     }

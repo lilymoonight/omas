@@ -33,8 +33,10 @@ import { registerSiteRoutes } from './sites/routes.js';
 import { sandboxAvailable, type SandboxSettings } from './pty/sandbox.js';
 
 export type ServerConfig = {
-  host: string;
-  port: number;
+  /** Listen host. CLI overrides config; falls back to 127.0.0.1. */
+  host?: string;
+  /** Listen port. CLI overrides config; falls back to 7681. */
+  port?: number;
   shell?: string;
   cwd?: string;
   configDir?: string;
@@ -81,6 +83,12 @@ export async function createServer(config: ServerConfig) {
     config: cfg?.defaultCwd,
   });
   logger.info({ defaultCwd }, 'new sessions default cwd');
+
+  // Listen address: CLI flag wins, else persisted config, else the defaults. Lets
+  // the installed service daemon (which only passes --config-dir) bind the host /
+  // port saved by `omas init` instead of hardcoding them into the unit file.
+  const host = config.host ?? cfg.host ?? '127.0.0.1';
+  const port = config.port ?? cfg.port ?? 7681;
 
   // Resolve the sandbox policy: CLI flags win over persisted config. Presence of
   // a root is what turns sandboxing on. We fail fast here (rather than at first
@@ -278,5 +286,5 @@ export async function createServer(config: ServerConfig) {
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
-  return { app, hub, store };
+  return { app, hub, store, host, port };
 }

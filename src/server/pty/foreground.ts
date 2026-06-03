@@ -49,11 +49,12 @@ export function parseCpuSeconds(token: string): number {
  * Classify a full command line into a known AI-agent key. Agents are often
  * launched through a node/python wrapper, so `comm` would just say "node" —
  * we scan the whole command line for the real tool name. Order matters:
- * `cursor-agent` before any bare `cursor`, `qodercli`/`qoder`, then `claude`.
+ * `cursor-agent` / bare `agent`, then `qodercli`/`qoder`, then `claude`.
  */
 export function classifyAgent(command: string): AgentKey | null {
   const c = command.toLowerCase();
   if (/(^|[\s/])cursor-agent(\s|$)/.test(c) || c.includes('cursor-agent')) return 'cursor';
+  if (/(^|[\s/])(?<![-\w])agent(\s|$)/.test(c)) return 'cursor';
   if (/(^|[\s/])qodercli(\s|$)/.test(c) || c.includes('qodercli') || /(^|[\s/])qoder(\s|$)/.test(c)) {
     return 'qoder';
   }

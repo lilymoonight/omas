@@ -17,7 +17,8 @@ type HeadlessTerminal = InstanceType<typeof HeadlessTerminal>;
 type SerializeAddon = InstanceType<typeof SerializeAddon>;
 import { RingBuffer } from './ring.js';
 import { ptyLocaleEnv } from './locale.js';
-import { resolveSandboxDir, buildSandboxCommand, type SandboxSettings } from './sandbox.js';
+import { resolveSandboxDir, buildSandboxCommand, sandboxUnprivIds, type SandboxSettings } from './sandbox.js';
+import { augmentSandboxAgentCommand, sandboxAgentShellArgs, writeSandboxAgentRc } from './agent-sandbox.js';
 import { buildPrivilegeDrop, type OsUserInfo } from './os-user.js';
 import fs from 'node:fs';
 import type { Session } from '../../shared/session.js';
@@ -149,7 +150,16 @@ export class PtySession extends EventEmitter {
       this.cwd = writable;
       this.sandboxed = true;
       this.sandboxSpec = spec;
-      const cmd = buildSandboxCommand(process.platform, { ...spec, shell: this.shell });
+      const unpriv = sandboxUnprivIds();
+      const rcPath = writeSandboxAgentRc(spec.tmp, home, this.shell);
+      const shellArgs = rcPath ? sandboxAgentShellArgs(this.shell, rcPath) : [];
+      const cmd = buildSandboxCommand(process.platform, {
+        ...spec,
+        shell: this.shell,
+        shellArgs,
+        unprivUid: unpriv?.uid,
+        unprivGid: unpriv?.gid,
+      });
       spawnFile = cmd.file;
       spawnArgs = cmd.args;
       spawnEnv = cmd.env;
@@ -226,9 +236,10 @@ export class PtySession extends EventEmitter {
     if (opts.initialCommand) {
       // Small delay so the shell prints its prompt first; the typed command
       // then appears at the prompt rather than racing it.
-      const cmd = opts.initialCommand.endsWith('\n')
+      let cmd = opts.initialCommand.endsWith('\n')
         ? opts.initialCommand
         : opts.initialCommand + '\n';
+      if (this.sandboxed) cmd = augmentSandboxAgentCommand(cmd.replace(/\n$/, ''), true) + '\n';
       setTimeout(() => {
         if (!this.exited) this.write(cmd);
       }, 200);
@@ -255,15 +266,19 @@ export class PtySession extends EventEmitter {
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null; signal: string | null; timedOut: boolean }> {
     const timeoutMs = Math.min(Math.max(opts.timeoutMs ?? 120_000, 1_000), 3_600_000);
     const cap = opts.maxOutputBytes ?? 4 * 1024 * 1024;
+    command = augmentSandboxAgentCommand(command, !!this.sandboxSpec);
 
     let file: string;
     let args: string[];
     const env = { ...process.env, ...ptyLocaleEnv() } as Record<string, string>;
     if (this.sandboxSpec) {
+      const unpriv = sandboxUnprivIds();
       const cmd = buildSandboxCommand(process.platform, {
         ...this.sandboxSpec,
         shell: '/bin/sh',
         shellArgs: ['-c', command],
+        unprivUid: unpriv?.uid,
+        unprivGid: unpriv?.gid,
       });
       file = cmd.file;
       args = cmd.args;

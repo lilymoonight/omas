@@ -87,7 +87,9 @@ export const SERVE_DESCRIPTION =
   '启动 Web 终端 HTTP/WebSocket 服务。省略子命令时 omas 默认执行 serve。';
 
 export const INIT_DESCRIPTION =
-  '交互式设置登录密码，写入 config.json（需 TTY）。服务注册前建议先执行 init。';
+  '交互式初始化 config.json（需 TTY）：登录密码 + 监听 host/port + 可选沙箱根目录 / 默认 cwd。'
+  + '写入后 config 即为唯一事实来源，serve 与 service 均无需再带这些参数（命令行仍可临时覆盖）。'
+  + '服务注册前建议先执行 init。';
 
 export const PASSWD_DESCRIPTION =
   '交互式修改已持久化 config.json 中的登录密码（需 TTY，且 config 已存在）。';

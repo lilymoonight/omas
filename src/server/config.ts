@@ -23,6 +23,13 @@ export const configSchema = z.object({
   passwordHash: z.string().min(1).optional(),
   cookieSecret: z.string().min(32),
   createdAt: z.string(),
+  /**
+   * Listen address / port. Persisted so `serve` and the installed service daemon
+   * run from config alone. `serve --host/--port` (and `service install --host/--port`)
+   * override these; when neither is set the defaults are 127.0.0.1 / 7681.
+   */
+  host: z.string().min(1).optional(),
+  port: z.number().int().min(1).max(65535).optional(),
   /** Default directory for new PTY sessions when the client omits cwd. */
   defaultCwd: z.string().min(1).optional(),
   /**

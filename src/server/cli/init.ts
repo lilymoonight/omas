@@ -1,9 +1,28 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import prompts from 'prompts';
 import { hashPassword, verifyPassword } from '../auth/password.js';
-import { loadConfig, saveConfig, resolveConfigDir, configPath, makeCookieSecret } from '../config.js';
+import { loadConfig, saveConfig, resolveConfigDir, configPath, makeCookieSecret, type Config } from '../config.js';
 
-export async function runInit(opts: { configDir?: string; force?: boolean }): Promise<void> {
+export type InitOpts = {
+  configDir?: string;
+  force?: boolean;
+  /** Listen host/port to persist (else prompted; defaults 127.0.0.1 / 7681). */
+  host?: string;
+  port?: number;
+  /** Default working dir for new sessions (persisted as defaultCwd). */
+  cwd?: string;
+  /** Enable & persist the sandbox with this writable ceiling (else prompted). */
+  sandboxRoot?: string;
+  /** false → persist sandbox.net=false (isolate net). Undefined leaves default. */
+  sandboxNet?: boolean;
+  /** false → persist sandbox.default=false (new sessions unsandboxed by default). */
+  sandboxDefault?: boolean;
+  /** Skip interactive prompts; persist only what's passed via flags. */
+  yes?: boolean;
+};
+
+export async function runInit(opts: InitOpts): Promise<void> {
   const dir = resolveConfigDir(opts.configDir);
   if (fs.existsSync(configPath(dir)) && !opts.force) {
     console.error(`config already exists at ${configPath(dir)} — pass --force to overwrite`);
@@ -11,9 +30,67 @@ export async function runInit(opts: { configDir?: string; force?: boolean }): Pr
   }
   const password = await readPasswordTwice();
   const hash = await hashPassword(password);
-  saveConfig(dir, { passwordHash: hash, cookieSecret: makeCookieSecret(), createdAt: new Date().toISOString() });
+
+  const interactive = !opts.yes && !!process.stdin.isTTY;
+
+  // Listen address. A flag wins; otherwise prompt (interactive) or take the
+  // default. Persisting these makes `serve` / the service daemon bind them
+  // without any command-line flags.
+  let host = opts.host;
+  let port = opts.port;
+  if (interactive && host == null) {
+    const a = await prompts({ type: 'text', name: 'v', message: '监听地址 host', initial: '127.0.0.1' });
+    host = typeof a.v === 'string' && a.v.trim() ? a.v.trim() : undefined;
+  }
+  if (interactive && port == null) {
+    const a = await prompts({
+      type: 'number',
+      name: 'v',
+      message: '监听端口 port',
+      initial: 7681,
+      validate: (n: number) => (n >= 1 && n <= 65535 ? true : '端口需在 1–65535'),
+    });
+    port = typeof a.v === 'number' ? a.v : undefined;
+  }
+
+  // Sandbox writable ceiling. Blank = disabled.
+  let sandboxRoot = opts.sandboxRoot;
+  if (interactive && sandboxRoot == null) {
+    const a = await prompts({
+      type: 'text',
+      name: 'v',
+      message: '沙箱可写根目录 sandbox-root（留空 = 不开启沙箱）',
+      initial: '',
+    });
+    sandboxRoot = typeof a.v === 'string' && a.v.trim() ? a.v.trim() : undefined;
+  }
+
+  const config: Config = {
+    passwordHash: hash,
+    cookieSecret: makeCookieSecret(),
+    createdAt: new Date().toISOString(),
+  };
+  if (host) config.host = host;
+  if (port != null) config.port = port;
+  if (opts.cwd) config.defaultCwd = path.resolve(opts.cwd);
+  if (sandboxRoot) {
+    const absRoot = path.resolve(sandboxRoot);
+    if (!fs.existsSync(absRoot) || !fs.statSync(absRoot).isDirectory()) {
+      console.warn(`! sandbox root does not exist yet: ${absRoot} (create it before starting, or serve will refuse to boot)`);
+    }
+    config.sandbox = { root: absRoot };
+    // Only store the non-default toggles to keep config tidy (both default true).
+    if (opts.sandboxNet === false) config.sandbox.net = false;
+    if (opts.sandboxDefault === false) config.sandbox.default = false;
+  }
+
+  saveConfig(dir, config);
   console.log(`wrote ${configPath(dir)} (mode 0600)`);
-  console.log('done. start the server with: omas serve');
+  const bits = [`host ${config.host ?? '127.0.0.1'}`, `port ${config.port ?? 7681}`];
+  if (config.sandbox) bits.push(`sandbox-root ${config.sandbox.root}`);
+  if (config.defaultCwd) bits.push(`cwd ${config.defaultCwd}`);
+  console.log(`  ${bits.join(' · ')}`);
+  console.log('done. start with: omas serve   (or run it as a service: omas service install)');
 }
 
 export async function runPasswd(opts: { configDir?: string; bypass?: boolean }): Promise<void> {
