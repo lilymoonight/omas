@@ -4,6 +4,12 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.6.1] - 2026-06-04
+
+### 修复
+
+- **macOS 沙箱内 `/private/tmp/… Operation not permitted`**：此前 macOS 的 Seatbelt 沙箱策略**特意拒绝**对 `/tmp` 与 `/var/folders` 的写入(并把 `TMPDIR` 指向工作目录下的 `.tmp`)。但很多工具会**硬编码写 `/tmp`** 而无视 `TMPDIR`——尤其 **Claude Code**(shell 快照、Bash 工具的临时文件),于是在沙箱会话里被拦下,报 `/private/tmp/…` 无写入权限(`/private/tmp` 是 `/tmp` 在 macOS 上的真实路径)。现放行系统临时目录写入(`/private/tmp`、`/private/var/folders`、`/private/var/tmp`),与 Linux 端「`/tmp` 为可写 tmpfs」的行为对齐;`TMPDIR` 仍指向隔离的 `.tmp`,守规矩的工具默认仍用隔离临时区。沙箱核心保护不变:工作目录与 HOME 之外的系统文件(`/etc`、`/private/var` 下的 `var/db`/`var/log` 等)、其他用户目录仍只读,临时目录本就是易失的。
+
 ## [1.6.0] - 2026-06-03
 
 ### 新增

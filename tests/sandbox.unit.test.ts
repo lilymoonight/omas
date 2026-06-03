@@ -95,9 +95,11 @@ describe('buildSeatbeltProfile (macOS)', () => {
     // The real home is writable so agents can persist config/credentials/state.
     expect(p).toContain('(allow file-write* (subpath "/Users/dev"))');
     expect(p).toContain('(allow file-write* (subpath "/dev"))');
-    // It must NOT broadly allow writes to /tmp or the per-user temp dir.
-    expect(p).not.toContain('(allow file-write* (subpath "/private/tmp"))');
-    expect(p).not.toContain('(allow file-write* (subpath "/private/var/folders"))');
+    // System temp dirs are writable (mirrors Linux's tmpfs /tmp) so tools that
+    // hardcode /tmp — Claude Code's snapshots / Bash tool, etc. — aren't denied.
+    expect(p).toContain('(allow file-write* (subpath "/private/tmp"))');
+    expect(p).toContain('(allow file-write* (subpath "/private/var/folders"))');
+    expect(p).toContain('(allow file-write* (subpath "/private/var/tmp"))');
   });
 
   it('allows network only when net=true', () => {

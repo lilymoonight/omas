@@ -17,8 +17,12 @@
 //   - macOS  → `sandbox-exec` (Seatbelt): a `(deny default)(allow file-read*)`
 //     profile that permits file-write* under the working dir, home, and /dev.
 //
-// TMPDIR is pointed at `.tmp` inside the working dir so tools get a writable temp
-// (on macOS we deny /tmp and /var/folders outright; Linux uses an isolated tmpfs).
+// TMPDIR is pointed at `.tmp` inside the working dir so well-behaved tools get an
+// isolated writable temp. The system temp dirs stay writable too, though, because
+// many tools hardcode /tmp (e.g. Claude Code's shell snapshots / Bash tool) and
+// ignore TMPDIR — denying them just broke those tools. Linux gets a private tmpfs
+// /tmp; macOS allows the real /private/tmp and /private/var/folders (shared with
+// the host, but temp is ephemeral and system files outside stay read-only).
 //
 // The argv/profile builders are pure (unit-testable on any platform); the actual
 // spawn, realpath and availability checks live in session.ts / server.ts.
@@ -132,6 +136,17 @@ export function buildSeatbeltProfile(opts: { writable: string; home: string; net
     // Device nodes (the PTY slave, /dev/null, /dev/tty, …) must stay writable or
     // the shell can't talk to its terminal.
     '(allow file-write* (subpath "/dev"))',
+    // System temp dirs. Mirrors Linux's writable (tmpfs) /tmp: lots of tools —
+    // Claude Code's shell snapshots / Bash tool, compilers, package managers —
+    // hardcode /tmp or the per-user /var/folders dir and ignore TMPDIR. Denying
+    // them broke those tools with "Operation not permitted" on /private/tmp/….
+    // Temp is ephemeral; everything else outside the working dir stays read-only.
+    // Seatbelt matches canonical paths, so use the /private/* realpaths. These
+    // three are the standard temp dirs (/tmp, the per-user $TMPDIR container, and
+    // /var/tmp); the rest of /private/var (var/db, var/log, …) stays read-only.
+    '(allow file-write* (subpath "/private/tmp"))',
+    '(allow file-write* (subpath "/private/var/folders"))',
+    '(allow file-write* (subpath "/private/var/tmp"))',
   ];
   if (opts.net) lines.push('(allow network*)');
   return lines.join('\n');
@@ -152,8 +167,9 @@ export function buildSandboxCommand(
     return {
       file: 'sandbox-exec',
       args: ['-p', profile, opts.shell, ...(opts.shellArgs ?? [])],
-      // HOME is the real home (writable via the profile); TMPDIR stays inside the
-      // working dir since we deny /tmp & /var/folders.
+      // HOME is the real home (writable via the profile); TMPDIR points at the
+      // isolated .tmp so compliant tools default there, while the real /tmp stays
+      // writable for tools that hardcode it.
       env: { HOME: opts.home, TMPDIR: opts.tmp },
     };
   }
