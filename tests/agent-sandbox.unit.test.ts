@@ -106,7 +106,7 @@ describe('silent sandbox shell setup', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omas-rc-'));
     try {
       const rc = writeSandboxAgentRc(dir, '/Users/alice', '/bin/zsh');
-      expect(rc).toBe(path.join(dir, '.omas-agent-rc'));
+      expect(rc).toBe(path.join(dir, '.omas-session-rc'));
       expect(fs.readFileSync(rc!, 'utf8')).toContain('--yolo');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });

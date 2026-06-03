@@ -18,7 +18,9 @@ type SerializeAddon = InstanceType<typeof SerializeAddon>;
 import { RingBuffer } from './ring.js';
 import { ptyLocaleEnv } from './locale.js';
 import { resolveSandboxDir, buildSandboxCommand, sandboxUnprivIds, type SandboxSettings } from './sandbox.js';
-import { augmentSandboxAgentCommand, sandboxAgentShellArgs, writeSandboxAgentRc } from './agent-sandbox.js';
+import { sessionShellArgs, writeSessionRc } from './cwd-report.js';
+import { augmentSandboxAgentCommand, writeSandboxAgentRc } from './agent-sandbox.js';
+import { Osc7CwdParser } from './osc-cwd.js';
 import { buildPrivilegeDrop, type OsUserInfo } from './os-user.js';
 import fs from 'node:fs';
 import type { Session } from '../../shared/session.js';
@@ -57,6 +59,7 @@ export type PtyEvents = {
   data: (bytes: Buffer) => void;
   exit: (info: { code: number | null; signal: string | null }) => void;
   title: (title: string) => void;
+  cwd: (path: string) => void;
   resize: (cols: number, rows: number) => void;
   clients: (count: number) => void;
 };
@@ -101,7 +104,10 @@ export class PtySession extends EventEmitter {
   exited = false;
   exitCode: number | null = null;
   exitSignal: string | null = null;
+  /** Tracks `cd` via OSC 7 from the shell hook (instant, no polling). */
+  liveCwd: string | null = null;
   private pty: IPty | null;
+  private readonly cwdParser = new Osc7CwdParser();
   /** Headless xterm instance mirroring the live screen + scrollback state.
    *  Lets us serialize a snapshot on attach so TUI apps (qoder/claude/cursor)
    *  show up intact after a reconnect instead of re-replaying the raw byte
@@ -128,6 +134,8 @@ export class PtySession extends EventEmitter {
     let spawnFile = this.shell;
     let spawnArgs: string[] = [];
     let spawnEnv: Record<string, string> = {};
+    let rcHome = fs.realpathSync(os.homedir());
+    let rcDir = path.join(os.tmpdir(), 'omas', this.id);
     if (opts.sandbox) {
       const resolved = resolveSandboxDir(opts.sandbox.root, opts.cwd);
       if (!resolved) {
@@ -141,18 +149,20 @@ export class PtySession extends EventEmitter {
       // Use the operator's REAL home (writable) so agents can read AND write
       // their existing config/credentials/state (~/.claude, ~/.cursor, …).
       const home = fs.realpathSync(os.homedir());
+      rcHome = home;
       const spec = {
         writable,
         home,
         tmp: path.join(writable, '.tmp'),
         net: opts.sandbox.net,
       };
+      rcDir = spec.tmp;
       this.cwd = writable;
       this.sandboxed = true;
       this.sandboxSpec = spec;
       const unpriv = sandboxUnprivIds();
       const rcPath = writeSandboxAgentRc(spec.tmp, home, this.shell);
-      const shellArgs = rcPath ? sandboxAgentShellArgs(this.shell, rcPath) : [];
+      const shellArgs = rcPath ? sessionShellArgs(this.shell, rcPath) : [];
       const cmd = buildSandboxCommand(process.platform, {
         ...spec,
         shell: this.shell,
@@ -169,7 +179,15 @@ export class PtySession extends EventEmitter {
       this.cwd = opts.cwd ?? opts.osUser?.home ?? requestedCwd;
       this.sandboxed = false;
       this.sandboxSpec = null;
+      if (opts.osUser) rcHome = fs.realpathSync(opts.osUser.home);
     }
+
+    if (!opts.sandbox) {
+      const rcPath = writeSessionRc(rcDir, { home: rcHome, shell: this.shell });
+      if (rcPath) spawnArgs = [...sessionShellArgs(this.shell, rcPath), ...spawnArgs];
+    }
+
+    this.liveCwd = this.cwd;
 
     // Model B: drop privileges to the target UNIX user. Wraps whatever command
     // we resolved above and overrides the identity env so the user's own shell
@@ -219,6 +237,7 @@ export class PtySession extends EventEmitter {
       },
     });
     this.pty.onData((buf: Buffer) => {
+      this.cwdParser.feed(buf, (p) => this.setLiveCwd(p));
       this.ring.append(buf);
       this.queueHeadless(buf);
       this.lastActivityAt = new Date();
@@ -474,6 +493,12 @@ export class PtySession extends EventEmitter {
     if (title === this.title) return;
     this.title = title;
     this.emit('title', title);
+  }
+
+  setLiveCwd(path: string): void {
+    if (!path || path === this.liveCwd) return;
+    this.liveCwd = path;
+    this.emit('cwd', path);
   }
 
   attachClient(): symbol {

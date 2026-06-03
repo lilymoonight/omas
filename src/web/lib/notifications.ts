@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 import type { Session } from '../../shared/session.js';
 import { sessions } from './stores.js';
+import { registerDocumentTitleWriter } from './page-title.js';
 
 // Desktop notifications + tab badge for when a recognized agent stops working
 // (active → idle), i.e. it likely finished or is waiting for input. This turns
@@ -122,7 +123,13 @@ function fireIdleNotification(s: Session): void {
 // --- Tab badge: title prefix + dynamically drawn favicon dot ----------------
 
 let baseTitle = typeof document !== 'undefined' ? document.title : '';
+let badgeCount = 0;
 let faviconEl: HTMLLinkElement | null = null;
+
+registerDocumentTitleWriter((title) => {
+  baseTitle = title;
+  applyBadge(badgeCount);
+});
 
 function ensureFavicon(): HTMLLinkElement | null {
   if (typeof document === 'undefined') return null;
@@ -172,6 +179,7 @@ function renderFavicon(dot: boolean): void {
 
 function applyBadge(count: number): void {
   if (typeof document === 'undefined') return;
+  badgeCount = count;
   document.title = count > 0 ? `(${count}) ${baseTitle}` : baseTitle;
   renderFavicon(count > 0);
 }
@@ -182,7 +190,6 @@ function applyBadge(count: number): void {
  * The badge clears when the user refocuses this tab. Returns a teardown fn.
  */
 export function startAgentWatcher(): () => void {
-  if (typeof document !== 'undefined') baseTitle = document.title;
   let prev: Session[] = [];
   let pending = 0;
 

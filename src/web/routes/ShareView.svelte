@@ -3,6 +3,7 @@
   import XTerm from '../components/XTerm.svelte';
   import { api } from '../lib/api.js';
   import { themePref, cycleTheme, THEME_LABEL } from '../lib/theme.js';
+  import { setTabTitle } from '../lib/page-title.js';
   import Icon from '../components/Icon.svelte';
 
   interface Props { token: string; }
@@ -24,6 +25,7 @@
     try {
       const meta = await api.sharedMeta(token);
       title = meta.title;
+      setTabTitle({ folder: meta.title, page: '共享' });
       ready = true;
     } catch {
       invalid = true;

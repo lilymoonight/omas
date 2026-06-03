@@ -8,9 +8,10 @@ export type ClientMessage =
   | { type: 'title'; title: string };
 
 export type ServerMessage =
-  | { type: 'hello'; seq: number; cols: number; rows: number; truncated: boolean; clientCount: number }
+  | { type: 'hello'; seq: number; cols: number; rows: number; truncated: boolean; clientCount: number; cwd?: string }
   | { type: 'ack'; seq: number }
   | { type: 'title'; title: string }
+  | { type: 'cwd'; path: string }
   | { type: 'clients'; count: number }
   | { type: 'exit'; code: number | null; signal: string | null }
   | { type: 'ping'; t: number };

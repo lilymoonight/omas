@@ -65,6 +65,7 @@ export function attachClient(
     rows: session.rows,
     truncated,
     clientCount: session.clients.size,
+    cwd: session.liveCwd ?? session.cwd,
   });
   if (initialBytes.length > 0) ws.send(initialBytes);
 
@@ -83,11 +84,13 @@ export function attachClient(
     ws.close(1000, 'session_exited');
   };
   const onTitle = (title: string): void => sendJson(ws, { type: 'title', title });
+  const onCwd = (cwd: string): void => sendJson(ws, { type: 'cwd', path: cwd });
   const onClients = (count: number): void => sendJson(ws, { type: 'clients', count });
 
   session.on('data', onData);
   session.on('exit', onExit);
   session.on('title', onTitle);
+  session.on('cwd', onCwd);
   session.on('clients', onClients);
 
   const ackTimer = setInterval(() => {
@@ -154,6 +157,7 @@ export function attachClient(
     session.off('data', onData);
     session.off('exit', onExit);
     session.off('title', onTitle);
+    session.off('cwd', onCwd);
     session.off('clients', onClients);
     session.detachClient(clientTag);
   };

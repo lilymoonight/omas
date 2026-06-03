@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { SessionHub } from '../pty/hub.js';
-import { shellCwd } from '../pty/shell-cwd.js';
+import { shellCwdForSession } from '../pty/shell-cwd.js';
 import { TtlCache } from '../lib/ttl-cache.js';
 import { wrapAsUser } from '../pty/fs-priv.js';
 import type { OsUserInfo } from '../pty/os-user.js';
@@ -100,7 +100,7 @@ export function registerGitRoutes(app: App, hub: SessionHub): void {
     const session = hub.get(id);
     if (!session) return reply.code(404).send({ error: 'not_found' });
     // Prefer the shell's *current* cwd (tracks `cd` commands) over the spawn-time cwd.
-    const cwd = (await shellCwd(session.pid)) ?? session.cwd;
+    const cwd = (await shellCwdForSession(session.pid, session.shell)) ?? session.cwd;
     if (!cwd) return reply.send({ available: false, reason: 'no_cwd' });
     const cacheKey = `${id}\0${cwd}`;
     const cached = gitStatusCache.get(cacheKey);

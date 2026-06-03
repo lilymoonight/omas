@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { api, type GitStatus, type GitFile } from '../lib/api.js';
   import { gitStatusEqual } from '../lib/stable-update.js';
   import Icon from './Icon.svelte';
@@ -18,7 +18,6 @@
   const { sessionId }: Props = $props();
 
   let status = $state<GitStatus | null>(null);
-  let timer: ReturnType<typeof setInterval>;
   let inFlight = false;
   let viewing = $state<{ path: string; staged: boolean } | null>(null);
 
@@ -29,7 +28,11 @@
     viewing = { path, staged };
   }
 
-  async function refresh() {
+  export function refresh(): void {
+    void refreshInternal();
+  }
+
+  async function refreshInternal() {
     if (inFlight) return;
     inFlight = true;
     try {
@@ -43,12 +46,13 @@
   }
 
   onMount(() => {
-    void refresh();
-    timer = setInterval(() => {
-      if (document.visibilityState === 'visible') void refresh();
-    }, 3000);
+    void refreshInternal();
   });
-  onDestroy(() => clearInterval(timer));
+
+  /** Refresh git status when the shell cwd changes. */
+  export function onCwdChange(_path: string): void {
+    void refreshInternal();
+  }
 
   // Group files into staged (index char != ' ' && != '?')
   // and unstaged/untracked sections.

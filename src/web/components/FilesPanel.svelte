@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { api, type FsEntry } from '../lib/api.js';
   import { fsEntriesEqual } from '../lib/stable-update.js';
   import Icon from './Icon.svelte';
@@ -37,18 +37,27 @@
   let loadingDirs = $state<Set<string>>(new Set());
   let truncatedDirs = $state<Set<string>>(new Set());
   let editing = $state<string | null>(null);
-  let timer: ReturnType<typeof setInterval>;
   let inFlight = false;
 
   const ROOT_KEY = '';
 
   onMount(() => {
     void refreshAll(true);
-    timer = setInterval(() => {
-      if (document.visibilityState === 'visible') void refreshAll(false);
-    }, 3000);
   });
-  onDestroy(() => clearInterval(timer));
+
+  /** Called when the shell reports a new cwd (OSC 7 over WebSocket). */
+  export function onCwdChange(path: string): void {
+    const cwdChanged = root !== null && root !== path;
+    root = path;
+    error = null;
+    loadingRoot = false;
+    if (cwdChanged) {
+      expanded = new Set([ROOT_KEY]);
+      children = new Map();
+      truncatedDirs = new Set();
+    }
+    void loadDir(ROOT_KEY, { force: true, silent: !cwdChanged });
+  }
 
   async function refreshAll(resetExpanded: boolean) {
     if (inFlight) return;

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { type SessionHub, HubError } from '../pty/hub.js';
 import { foregroundForPids } from '../pty/foreground.js';
-import { shellCwd, shellCwdMany } from '../pty/shell-cwd.js';
+import { shellCwdForSession, shellCwdMany } from '../pty/shell-cwd.js';
 import { resolveSandboxDir, type SandboxSettings } from '../pty/sandbox.js';
 import { verifyPassword } from '../auth/password.js';
 import type { LoginLimiter } from '../auth/limiter.js';
@@ -77,9 +77,9 @@ export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRo
     const viewer = authRequired ? auth!.userFor(req) : null;
     // Non-admins only see their own sessions; open/single mode sees all.
     const list = hub.list().filter((s) => canAccess(s.owner, viewer, authRequired));
-    const pids = list.map((s) => s.pid);
+    const pids = list.map((s) => ({ pid: s.pid, shell: s.shell }));
     const [fg, cwds] = await Promise.all([
-      foregroundForPids(pids),
+      foregroundForPids(pids.map((p) => p.pid)),
       shellCwdMany(pids),
     ]);
     return list.map((s) => {
@@ -89,7 +89,7 @@ export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRo
         foreground: info?.foreground ?? null,
         agent: info?.agent ?? null,
         agentState: info?.agentState ?? null,
-        liveCwd: s.pid != null ? cwds.get(s.pid) ?? null : null,
+        liveCwd: s.liveCwd ?? (s.pid != null ? cwds.get(s.pid) ?? null : null),
         ownerName: s.owner ? auth?.usernameFor(s.owner) ?? null : null,
       };
     });
@@ -178,14 +178,17 @@ export function registerSessionRoutes(app: App, hub: SessionHub, opts: SessionRo
     const { id } = req.params as { id: string };
     const s = hub.get(id);
     if (!s) return reply.code(404).send({ error: 'not_found' });
-    const [fg, liveCwd] = await Promise.all([foregroundForPids([s.pid]), shellCwd(s.pid)]);
+    const [fg, liveCwd] = await Promise.all([
+      foregroundForPids([s.pid]),
+      shellCwdForSession(s.pid, s.shell),
+    ]);
     const info = s.pid != null ? fg.get(s.pid) : undefined;
     return {
       ...s.toJSON(),
       foreground: info?.foreground ?? null,
       agent: info?.agent ?? null,
       agentState: info?.agentState ?? null,
-      liveCwd: liveCwd ?? null,
+      liveCwd: s.liveCwd ?? liveCwd ?? null,
       ownerName: s.owner ? auth?.usernameFor(s.owner) ?? null : null,
     };
   });

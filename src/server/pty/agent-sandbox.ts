@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { buildSessionRcContent, sessionShellArgs, shellKind, writeSessionRc } from './cwd-report.js';
 
 /** Claude Code: skip permission prompts in confined sandboxes. */
 export const CLAUDE_SKIP_PERMISSIONS = '--dangerously-skip-permissions';
@@ -66,14 +67,6 @@ export function augmentSandboxAgentCommand(command: string, sandboxed: boolean):
 /** @deprecated use augmentSandboxAgentCommand */
 export const augmentClaudeCommand = augmentSandboxAgentCommand;
 
-function shellKind(shell: string): 'zsh' | 'bash' | 'fish' | null {
-  const base = path.basename(shell).toLowerCase();
-  if (base.includes('zsh')) return 'zsh';
-  if (base.includes('bash')) return 'bash';
-  if (base === 'fish') return 'fish';
-  return null;
-}
-
 export function sandboxAgentShellSupported(shell: string): boolean {
   return shellKind(shell) !== null;
 }
@@ -97,50 +90,20 @@ function agentAliasesForShell(shell: string): string {
 }
 
 export function buildSandboxAgentRcContent(home: string, shell: string): string {
-  const h = shellQuote(home);
-  const aliases = agentAliasesForShell(shell);
-  switch (shellKind(shell)) {
-    case 'zsh':
-      return `# omas sandbox (silent)\n[ -f ${h}/.zshrc ] && . ${h}/.zshrc\n${aliases}\n`;
-    case 'bash':
-      return `# omas sandbox (silent)\n[ -f ${h}/.bashrc ] && . ${h}/.bashrc\n${aliases}\n`;
-    case 'fish':
-      return `# omas sandbox (silent)\n${aliases}\n`;
-    default:
-      return `${aliases}\n`;
-  }
+  return buildSessionRcContent({ home, shell, extra: agentAliasesForShell(shell) });
 }
 
 /** @deprecated */
 export const buildClaudeSandboxRcContent = buildSandboxAgentRcContent;
 
-export function sandboxAgentShellArgs(shell: string, rcPath: string): string[] {
-  switch (shellKind(shell)) {
-    case 'zsh':
-      return ['--rcfile', rcPath];
-    case 'bash':
-      return ['--rcfile', rcPath, '-i'];
-    case 'fish':
-      return ['--init-command', agentAliasesForShell(shell).replace(/\n/g, '; ')];
-    default:
-      return [];
-  }
-}
+export const sandboxAgentShellArgs = sessionShellArgs;
 
 /** @deprecated */
 export const claudeSandboxShellArgs = sandboxAgentShellArgs;
 
 export function writeSandboxAgentRc(tmpDir: string, home: string, shell: string): string | null {
-  if (!sandboxAgentShellSupported(shell)) return null;
-  fs.mkdirSync(tmpDir, { recursive: true });
-  const rcPath = path.join(tmpDir, '.omas-agent-rc');
-  fs.writeFileSync(rcPath, buildSandboxAgentRcContent(home, shell), { mode: 0o600 });
-  return rcPath;
+  return writeSessionRc(tmpDir, { home, shell, extra: agentAliasesForShell(shell) });
 }
 
 /** @deprecated */
 export const writeClaudeSandboxRc = writeSandboxAgentRc;
-
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}

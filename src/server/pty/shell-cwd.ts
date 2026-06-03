@@ -1,6 +1,15 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { promisify } from 'node:util';
+import {
+  buildProcIndex,
+  commandBasename,
+  getProcessSnapshot,
+  pickForegroundRow,
+  subtreePids,
+  type ProcRow,
+} from './foreground.js';
 
 const exec = promisify(execFile);
 
@@ -30,7 +39,7 @@ async function shellCwdUncached(pid: number): Promise<string | null> {
   return null;
 }
 
-/** Read the shell process cwd (tracks `cd`), or null if unavailable. */
+/** Read the cwd of a specific process, or null if unavailable. */
 export async function shellCwd(pid: number | null): Promise<string | null> {
   if (!pid) return null;
   const hit = cwdCache.get(pid);
@@ -40,50 +49,55 @@ export async function shellCwd(pid: number | null): Promise<string | null> {
   return cwd;
 }
 
+/** Deepest shell descendant of the PTY root (matches session.shell basename). */
+export function findShellPid(
+  rows: ProcRow[],
+  ptyRootPid: number,
+  shellPath: string,
+  index: ReturnType<typeof buildProcIndex>,
+): number | null {
+  const want = path.basename(shellPath).toLowerCase();
+  let best: number | null = null;
+  for (const pid of subtreePids(rows, ptyRootPid, index.children)) {
+    const row = index.byPid.get(pid);
+    if (!row) continue;
+    if (commandBasename(row.command).toLowerCase() !== want) continue;
+    if (best == null || pid > best) best = pid;
+  }
+  return best;
+}
+
 /**
- * Resolve cwd for many pids at once. On macOS this collapses N per-pid `lsof`
- * spawns (the dominant cost of `GET /api/sessions` polling) into a SINGLE
- * `lsof` call for all cache-missing pids; Linux stays per-pid `/proc` readlinks
- * (already cheap). Results are written through the same per-pid TTL cache.
+ * PID whose cwd tracks `cd` for a session. The PTY root is often a wrapper
+ * (runuser / bwrap / sudo) whose cwd stays at the spawn dir; prefer the
+ * foreground app when present, otherwise the interactive shell child.
  */
-export async function shellCwdMany(pids: Array<number | null>): Promise<Map<number, string | null>> {
-  const out = new Map<number, string | null>();
-  const now = Date.now();
-  const miss: number[] = [];
-  for (const pid of pids) {
-    if (!pid) continue;
-    if (out.has(pid)) continue;
-    const hit = cwdCache.get(pid);
-    if (hit && now - hit.at < CWD_CACHE_TTL_MS) out.set(pid, hit.cwd);
-    else miss.push(pid);
-  }
-  if (miss.length === 0) return out;
+export function cwdTargetPid(
+  rows: ProcRow[],
+  ptyRootPid: number,
+  shellPath: string,
+  index: ReturnType<typeof buildProcIndex>,
+): number {
+  const fg = pickForegroundRow(rows, ptyRootPid, index);
+  if (fg) return fg.pid;
+  return findShellPid(rows, ptyRootPid, shellPath, index) ?? ptyRootPid;
+}
 
-  if (process.platform === 'darwin') {
-    const resolved = await lsofCwdMany(miss);
-    const at = Date.now();
-    for (const pid of miss) {
-      const cwd = resolved.get(pid) ?? null;
-      cwdCache.set(pid, { at, cwd });
-      out.set(pid, cwd);
-    }
-    return out;
-  }
-
-  // Linux / other: per-pid readlink is cheap; run in parallel.
-  await Promise.all(
-    miss.map(async (pid) => {
-      const cwd = await shellCwdUncached(pid);
-      cwdCache.set(pid, { at: Date.now(), cwd });
-      out.set(pid, cwd);
-    }),
-  );
-  return out;
+export async function shellCwdForSession(
+  ptyRootPid: number | null,
+  shellPath: string,
+): Promise<string | null> {
+  if (!ptyRootPid) return null;
+  const rows = await getProcessSnapshot();
+  const index = buildProcIndex(rows);
+  const target = cwdTargetPid(rows, ptyRootPid, shellPath, index);
+  return shellCwd(target);
 }
 
 /** One `lsof` for all pids; parse `-Fpn` output into pid → cwd. */
 async function lsofCwdMany(pids: number[]): Promise<Map<number, string | null>> {
   const out = new Map<number, string | null>();
+  if (pids.length === 0) return out;
   try {
     const { stdout } = await exec(
       'lsof',
@@ -101,6 +115,60 @@ async function lsofCwdMany(pids: number[]): Promise<Map<number, string | null>> 
     }
   } catch {
     /* leave unresolved pids as null */
+  }
+  return out;
+}
+
+async function readCwdMany(pids: number[]): Promise<Map<number, string | null>> {
+  const out = new Map<number, string | null>();
+  const now = Date.now();
+  const miss: number[] = [];
+  for (const pid of pids) {
+    const hit = cwdCache.get(pid);
+    if (hit && now - hit.at < CWD_CACHE_TTL_MS) out.set(pid, hit.cwd);
+    else miss.push(pid);
+  }
+  if (miss.length === 0) return out;
+
+  if (process.platform === 'darwin') {
+    const resolved = await lsofCwdMany(miss);
+    const at = Date.now();
+    for (const pid of miss) {
+      const cwd = resolved.get(pid) ?? null;
+      cwdCache.set(pid, { at, cwd });
+      out.set(pid, cwd);
+    }
+    return out;
+  }
+
+  await Promise.all(
+    miss.map(async (pid) => {
+      const cwd = await shellCwdUncached(pid);
+      cwdCache.set(pid, { at: Date.now(), cwd });
+      out.set(pid, cwd);
+    }),
+  );
+  return out;
+}
+
+/**
+ * Resolve live cwd for many sessions at once. Keys are PTY root pids (session.pid).
+ * On macOS this collapses N per-pid `lsof` spawns into one batch for all targets.
+ */
+export async function shellCwdMany(
+  items: Array<{ pid: number | null; shell: string }>,
+): Promise<Map<number, string | null>> {
+  const out = new Map<number, string | null>();
+  const rows = await getProcessSnapshot();
+  const index = buildProcIndex(rows);
+  const targetByRoot = new Map<number, number>();
+  for (const { pid, shell } of items) {
+    if (!pid) continue;
+    targetByRoot.set(pid, cwdTargetPid(rows, pid, shell, index));
+  }
+  const cwdByTarget = await readCwdMany([...new Set(targetByRoot.values())]);
+  for (const [root, target] of targetByRoot) {
+    out.set(root, cwdByTarget.get(target) ?? null);
   }
   return out;
 }

@@ -4,6 +4,18 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.7.1] - 2026-06-04
+
+### 新增
+
+- **标签页标题按工作目录区分**：浏览器标签显示 `hostname · 最后一级目录名`（分享页、通知标题同步），不再一律显示 `oh-my-agent-shell`。
+- **OSC 7 事件驱动 cwd 同步**：会话通过 `.omas-session-rc` 在 zsh/bash/fish 的 `cd` / prompt 时发送 OSC 7；服务端解析 PTY 输出并经 WebSocket 推送 `{ type: 'cwd' }`，文件树与 Git 侧栏**即时刷新**，去掉原先 3 秒轮询。
+
+### 修复
+
+- **`cd` 后左右侧栏不跟随**：`shell-cwd` 优先读前台进程或交互 shell 子进程的 cwd（不再误读 bwrap/runuser 包装进程的 cwd）；列表 API 优先 `liveCwd`。
+- **沙箱 session rc 统一为 `.omas-session-rc`**：合并 cwd hook 与 agent alias，所有会话（含非沙箱）加载同一 rc 文件。
+
 ## [1.7.0] - 2026-06-04
 
 ### 新增

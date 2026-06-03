@@ -6,6 +6,7 @@ export type WsEvents = {
   data: (bytes: Uint8Array) => void;
   exit: (info: { code: number | null; signal: string | null }) => void;
   title: (title: string) => void;
+  cwd: (path: string) => void;
   clients: (count: number) => void;
   status: (status: 'connecting' | 'open' | 'closed') => void;
 };
@@ -22,6 +23,7 @@ export class SessionSocket {
     data: new Set(),
     exit: new Set(),
     title: new Set(),
+    cwd: new Set(),
     clients: new Set(),
     status: new Set(),
   };
@@ -85,6 +87,9 @@ export class SessionSocket {
             break;
           case 'title':
             this.emit('title', msg.title);
+            break;
+          case 'cwd':
+            this.emit('cwd', msg.path);
             break;
           case 'clients':
             this.emit('clients', msg.count);

@@ -22,7 +22,7 @@ export type ForegroundInfo = {
   agentState: AgentState | null;
 };
 
-type ProcRow = { pid: number; ppid: number; stat: string; cpuTime: number; command: string };
+export type ProcRow = { pid: number; ppid: number; stat: string; cpuTime: number; command: string };
 
 /**
  * Parse a `ps` TIME value (cumulative CPU time) into seconds. Handles the
@@ -254,6 +254,9 @@ async function psSnapshot(): Promise<ProcRow[]> {
   return inflight;
 }
 
+/** Shared `ps` snapshot (cached) for foreground + live-cwd probes. */
+export const getProcessSnapshot = psSnapshot;
+
 /** Resolve foreground/agent info for many shell pids from a single ps snapshot. */
 export async function foregroundForPids(
   pids: Array<number | null>,
@@ -281,6 +284,8 @@ export async function foregroundForPids(
   }
   return out;
 }
+
+export { buildIndex as buildProcIndex };
 
 export function clearForegroundSnapshot(): void {
   snapshot = null;

@@ -1,7 +1,7 @@
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import type { PtySession } from './session.js';
-import { shellCwd } from './shell-cwd.js';
+import { shellCwdForSession } from './shell-cwd.js';
 
 export const MAX_EDIT_BYTES = 2 * 1024 * 1024;
 export const MAX_LIST_ENTRIES = 500;
@@ -31,7 +31,8 @@ export function isUnderRoot(root: string, target: string): boolean {
 }
 
 export async function sessionCwd(session: PtySession): Promise<string | null> {
-  return (await shellCwd(session.pid)) ?? session.cwd ?? null;
+  if (session.liveCwd) return session.liveCwd;
+  return (await shellCwdForSession(session.pid, session.shell)) ?? session.cwd ?? null;
 }
 
 export function resolveUnderCwd(

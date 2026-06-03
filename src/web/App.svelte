@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { route, navigate } from './lib/router.js';
   import { auth, checkAuth } from './lib/stores.js';
+  import { setTabTitle } from './lib/page-title.js';
   import List from './routes/List.svelte';
   import Login from './routes/Login.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
@@ -21,6 +22,29 @@
     if (current.name === 'shared') return;
     if (a === 'out' && current.name !== 'login') navigate({ name: 'login' });
     if (a === 'in' && current.name === 'login') navigate({ name: 'list' });
+  });
+
+  $effect(() => {
+    if (current.name === 'shared' || current.name === 'terminal') return;
+    if (authState === 'out' || current.name === 'login') {
+      setTabTitle({ page: '登录' });
+      return;
+    }
+    if (authState !== 'in') return;
+    switch (current.name) {
+      case 'list':
+        setTabTitle({ page: '会话' });
+        break;
+      case 'history':
+        setTabTitle({ page: '历史' });
+        break;
+      case 'publish':
+        setTabTitle({ page: '站点' });
+        break;
+      case 'users':
+        setTabTitle({ page: '用户' });
+        break;
+    }
   });
 
   let HistoryRoute = $state<Component | null>(null);

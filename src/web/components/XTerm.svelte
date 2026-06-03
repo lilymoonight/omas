@@ -85,6 +85,7 @@
     shareToken?: string;
     title?: string;
     onTitle?: (title: string) => void;
+    onCwd?: (path: string) => void;
     onClientCount?: (n: number) => void;
     onExit?: (info: { code: number | null; signal: string | null }) => void;
     onStatus?: (status: 'connecting' | 'open' | 'closed') => void;
@@ -97,6 +98,7 @@
     shareToken,
     title = '终端',
     onTitle,
+    onCwd,
     onClientCount,
     onExit,
     onStatus,
@@ -487,6 +489,7 @@
     socket = new SessionSocket(sessionId, shareToken ? { shareToken } : {});
     socket.on('status', (s) => onStatus?.(s));
     socket.on('hello', (msg) => {
+      if (msg.cwd) onCwd?.(msg.cwd);
       if (msg.truncated) {
         attachPhase = 'restoring';
         stickToLiveScreen = true;
@@ -528,6 +531,7 @@
       writeBatch?.push(bytes, onDone);
     });
     socket.on('title', (t) => onTitle?.(t));
+    socket.on('cwd', (p) => onCwd?.(p));
     socket.on('clients', (c) => onClientCount?.(c));
     socket.on('exit', (info) => onExit?.(info));
 

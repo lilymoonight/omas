@@ -4,7 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { SessionHub } from '../pty/hub.js';
 import type { PtySession } from '../pty/session.js';
-import { shellCwd } from '../pty/shell-cwd.js';
+import { shellCwdForSession } from '../pty/shell-cwd.js';
 import { wrapAsUser, fsStat, fsRead, fsWriteText } from '../pty/fs-priv.js';
 import type { OsUserInfo } from '../pty/os-user.js';
 
@@ -58,7 +58,7 @@ function clampUtf8(s: string, max: number): { text: string; clipped: boolean } {
 }
 
 async function resolveRepoFile(session: PtySession, relPath: string) {
-  const cwd = (await shellCwd(session.pid)) ?? session.cwd;
+  const cwd = (await shellCwdForSession(session.pid, session.shell)) ?? session.cwd;
   const root = await gitTopLevel(cwd, session.osUserInfo);
   if (!root) return { error: 'not_a_repo' as const };
   const abs = path.resolve(root, relPath);

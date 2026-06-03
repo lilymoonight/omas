@@ -7,6 +7,8 @@
   import { themePref, cycleTheme, THEME_LABEL } from '../lib/theme.js';
   import { refreshHistoryAfterSessionClose } from '../lib/history-cache.js';
   import { navigate } from '../lib/router.js';
+  import { sessions, startSessionPolling, stopSessionPolling } from '../lib/stores.js';
+  import { setTabTitle, folderBasename } from '../lib/page-title.js';
   import { estimateTermSize } from '../lib/term-size.js';
   import { NARROW_BREAKPOINT } from '../lib/term-layout.js';
   import type { Session } from '../../shared/session.js';
@@ -65,7 +67,8 @@
   let drawerLeft = $state(false);
   let drawerRight = $state(false);
 
-  let filesPanel = $state<{ refresh: () => void } | null>(null);
+  let filesPanel = $state<{ refresh: () => void; onCwdChange: (path: string) => void } | null>(null);
+  let gitPanel = $state<{ refresh: () => void; onCwdChange: (path: string) => void } | null>(null);
   let xterm = $state<{
     toggleRecording: () => void;
     isRecording: () => boolean;
@@ -135,7 +138,15 @@
   let dragDepth = $state(0);
   let uploadSeq = 0;
   const dragging = $derived(dragDepth > 0);
-  const dropTarget = $derived(session?.liveCwd || session?.cwd || '');
+  const dropTarget = $derived(session?.liveCwd ?? session?.cwd ?? '');
+
+  function handleShellCwd(path: string): void {
+    if (session) session = { ...session, liveCwd: path };
+    filesPanel?.onCwdChange(path);
+    gitPanel?.onCwdChange(path);
+    const folder = folderBasename(path);
+    if (folder) setTabTitle({ folder });
+  }
 
   function fmtBytes(n: number): string {
     if (n < 1024) return `${n} B`;
@@ -222,7 +233,15 @@
   let mq: MediaQueryList | undefined;
   let onMqChange: ((e: MediaQueryListEvent) => void) | undefined;
 
+  $effect(() => {
+    const fromStore = $sessions.find((s) => s.id === sessionId);
+    const cwd = fromStore?.liveCwd ?? fromStore?.cwd ?? session?.liveCwd ?? session?.cwd;
+    const folder = folderBasename(cwd);
+    setTabTitle(folder ? { folder } : undefined);
+  });
+
   onMount(async () => {
+    startSessionPolling();
     mq = window.matchMedia(`(max-width: ${NARROW_BREAKPOINT}px)`);
     isNarrow = mq.matches;
     onMqChange = (e) => {
@@ -245,6 +264,7 @@
   });
 
   onDestroy(() => {
+    stopSessionPolling();
     if (mq && onMqChange) mq.removeEventListener('change', onMqChange);
   });
 
@@ -458,6 +478,7 @@
           {sessionId}
           {title}
           onTitle={(t) => (title = t)}
+          onCwd={handleShellCwd}
           onClientCount={(n) => (clientCount = n)}
           onExit={(info) => (exitInfo = info)}
           onStatus={(s) => (status = s)}
@@ -515,7 +536,7 @@
 
     {#if session}
       <div class="side-slot right">
-        <GitPanel {sessionId} />
+        <GitPanel bind:this={gitPanel} {sessionId} />
       </div>
     {/if}
   </div>
