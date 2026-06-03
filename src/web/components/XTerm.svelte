@@ -15,7 +15,7 @@
   import {
     isViewportNearBottom,
     pinLiveScreen,
-    scrollToLiveScreen,
+    maybeScrollToLiveScreen,
     shouldStickToLiveScreen,
   } from '../lib/term-viewport.js';
   import { createTermWriteBatch, type TermWriteBatch } from '../lib/term-write-batch.js';
@@ -153,6 +153,7 @@
   let userScrolledUp = false;
   /** Re-evaluate scroll intent after a user gesture settles. */
   let scrollIntentRaf: number | undefined;
+  let scrollSub: { dispose(): void } | undefined;
   /** First attach settle (fonts + delayed fit) runs once per mount. */
   let attachSettled = false;
   /** Ignore fit/resize echoes while applying server snapshot dimensions. */
@@ -512,11 +513,11 @@
         if (pendingScrollBottom) {
           finishRestoreScroll();
           requestAnimationFrame(() => markAttachReady());
-        } else if (shouldStickToLiveScreen(term, liveFlags())) {
-          // Re-check intent *after* the write lands: the data may have flipped
-          // to the alt screen or pushed new live output. Pinning here is what
-          // keeps a redrawing TUI from drifting up into old scrollback.
-          scrollToLiveScreen(term);
+        } else {
+          // Re-check intent *after* the write lands. Skip when the user scrolled
+          // up (even on the alt screen) or we're already at the live bottom —
+          // Claude/cursor idle cursor-blink redraws otherwise yank scrollback.
+          maybeScrollToLiveScreen(term, liveFlags());
         }
       };
       if (pendingScrollBottom) {
@@ -558,6 +559,7 @@
     // reading that as "scrolled up" is exactly what snapped the viewport to old
     // scrollback at random. Wheel + scroll keys cover scrolling up and back.
     host.addEventListener('wheel', refreshScrollIntent, { passive: true });
+    scrollSub = term.onScroll(() => refreshScrollIntent());
     term.attachCustomKeyEventHandler((e) => {
       // Cmd/Ctrl+F opens scrollback search instead of the browser's find — but
       // only on the normal buffer. On the alt screen a full-screen TUI (vim,
@@ -593,6 +595,7 @@
     if (resizeRaf !== undefined) cancelAnimationFrame(resizeRaf);
     if (scrollIntentRaf !== undefined) cancelAnimationFrame(scrollIntentRaf);
     host?.removeEventListener('wheel', refreshScrollIntent);
+    scrollSub?.dispose();
     resizeObserver?.disconnect();
     socket?.close();
     term?.dispose();

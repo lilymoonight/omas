@@ -4,6 +4,7 @@ import {
   isViewportNearBottom,
   isAltScreenActive,
   shouldStickToLiveScreen,
+  maybeScrollToLiveScreen,
   pinLiveScreen,
 } from '../src/web/lib/term-viewport.js';
 
@@ -37,6 +38,25 @@ describe('term-viewport', () => {
   it('sticks on alternate screen even when viewport is not at bottom', () => {
     const { term } = mockTerm({ type: 'alternate', viewportY: 0, baseY: 50 });
     expect(shouldStickToLiveScreen(term, FLAGS)).toBe(true);
+  });
+
+  it('does not stick on alternate screen when the user scrolled up into scrollback', () => {
+    const { term } = mockTerm({ type: 'alternate', viewportY: 0, baseY: 50 });
+    expect(shouldStickToLiveScreen(term, { ...FLAGS, userScrolledUp: true })).toBe(false);
+  });
+
+  it('maybeScrollToLiveScreen skips when already at bottom or user scrolled up', () => {
+    const atBottom = mockTerm({ type: 'alternate', viewportY: 50, baseY: 50 });
+    maybeScrollToLiveScreen(atBottom.term, FLAGS);
+    expect(atBottom.scrollToBottom).not.toHaveBeenCalled();
+
+    const scrolledUp = mockTerm({ type: 'alternate', viewportY: 0, baseY: 50 });
+    maybeScrollToLiveScreen(scrolledUp.term, { ...FLAGS, userScrolledUp: true });
+    expect(scrolledUp.scrollToBottom).not.toHaveBeenCalled();
+
+    const needsPin = mockTerm({ type: 'normal', viewportY: 0, baseY: 50 });
+    maybeScrollToLiveScreen(needsPin.term, FLAGS);
+    expect(needsPin.scrollToBottom).toHaveBeenCalledTimes(1);
   });
 
   it('sticks on normal screen regardless of geometry unless the user scrolled up', () => {

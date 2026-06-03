@@ -48,15 +48,19 @@ export function isAltScreenActive(term: Terminal): boolean {
 }
 
 /**
- * TUI apps (Cursor/Claude) use the alternate screen (no scrollback), and even
- * plain shells redraw aggressively; a resize or reconnect can leave the
- * viewport showing ancient main-buffer scrollback unless we keep pinning.
- * Stick to the live screen unless the user explicitly scrolled up to read back.
+ * TUI apps (Cursor/Claude) use the alternate screen. xterm still lets the user
+ * wheel up into the main-buffer scrollback while the alt screen is active; we
+ * must honour that intent. Otherwise idle cursor-blink redraws keep calling
+ * scrollToBottom and the viewport feels "locked" on the live prompt.
+ *
+ * On the normal buffer, resize/reflow can transiently move viewportY — only an
+ * explicit user-scrolled-up flag should stop pinning, never geometry alone.
  */
 export function shouldStickToLiveScreen(term: Terminal, flags: LiveScreenFlags): boolean {
   if (flags.stickToLiveScreen || flags.pendingScrollBottom) return true;
+  if (flags.userScrolledUp) return false;
   if (isAltScreenActive(term)) return true;
-  return !flags.userScrolledUp;
+  return true;
 }
 
 export function scrollToLiveScreen(term: Terminal): void {
@@ -67,9 +71,15 @@ export function scrollToLiveScreen(term: Terminal): void {
   }
 }
 
+/** Pin only when sticking is enabled and the viewport is not already at bottom. */
+export function maybeScrollToLiveScreen(term: Terminal, flags: LiveScreenFlags): void {
+  if (!shouldStickToLiveScreen(term, flags)) return;
+  if (!isViewportAtBottom(term)) scrollToLiveScreen(term);
+}
+
 export function pinLiveScreen(term: Terminal, flags: LiveScreenFlags): void {
-  scrollToLiveScreen(term);
+  maybeScrollToLiveScreen(term, flags);
   requestAnimationFrame(() => {
-    if (shouldStickToLiveScreen(term, flags)) scrollToLiveScreen(term);
+    maybeScrollToLiveScreen(term, flags);
   });
 }
