@@ -106,8 +106,12 @@ describe('silent sandbox shell setup', () => {
 
   it('writes PATH wrappers and rc under the session tmp dir', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omas-rc-'));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'omas-home-'));
+    const bin = path.join(home, '.local', 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(path.join(bin, 'agent'), '#!/bin/sh\necho ok\n', { mode: 0o755 });
     try {
-      const rc = writeSandboxAgentRc(dir, '/Users/alice', '/bin/zsh');
+      const rc = writeSandboxAgentRc(dir, home, '/bin/zsh');
       expect(rc).toBe(path.join(dir, '.zshrc'));
       expect(fs.readFileSync(rc!, 'utf8')).toContain('--yolo');
       const wrapDir = path.join(dir, 'omas-bin');
@@ -115,6 +119,7 @@ describe('silent sandbox shell setup', () => {
       expect(fs.readFileSync(path.join(wrapDir, 'agent'), 'utf8')).toContain('--yolo');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
