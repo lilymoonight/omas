@@ -31,6 +31,7 @@
 // spawn, realpath and availability checks live in session.ts / server.ts.
 
 import path from 'node:path';
+import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 
 export type SandboxSettings = {
@@ -63,6 +64,39 @@ export function resolveSandboxDir(root: string, requestedCwd: string | undefined
 }
 
 /**
+ * Linux GPU passthrough — same strategy as ai-safe (best_ai/ai-safe):
+ * start from bwrap's minimal `--dev /dev`, then overlay host `/dev/nvidia*`
+ * with `--dev-bind-try` (skip missing nodes on headless boxes).
+ * Block devices (/dev/sda, /dev/nvme, …) are never exposed.
+ */
+export function discoverGpuDevBinds(platform: NodeJS.Platform = process.platform): string[] {
+  if (platform !== 'linux') return [];
+  try {
+    return fs.readdirSync('/dev')
+      .filter((name) => name.startsWith('nvidia'))
+      .map((name) => path.join('/dev', name))
+      .filter((p) => {
+        try { return fs.statSync(p).isCharacterDevice(); } catch { return false; }
+      });
+  } catch {
+    return [];
+  }
+}
+
+/** macOS Seatbelt rules for Metal / PyTorch MPS / MLX GPU compute inside sandbox-exec. */
+export function buildGpuSeatbeltRules(platform: NodeJS.Platform = process.platform): string[] {
+  if (platform !== 'darwin') return [];
+  // Filesystem allow-list does not grant IOKit/Metal. Minimal surface from
+  // production sandboxes (AGX on Apple Silicon + IOGPU fallback on Intel).
+  return [
+    '(allow iokit-open (iokit-user-client-class "AGXDeviceUserClient" "IOGPUDeviceUserClient"))',
+    '(allow iokit-get-properties)',
+    // Shader JIT (PyTorch MPS, some MLX paths) talks to the compiler service.
+    '(allow mach-lookup (global-name "com.apple.MTLCompilerService"))',
+  ];
+}
+
+/**
  * Build the bubblewrap argv that wraps `shell`. Whole FS read-only; the working
  * dir (`writable`) and the real `home` rebound read-write; a fresh /dev, /proc
  * and a tmpfs /tmp; HOME pointed at `home`. The shell starts in `writable`.
@@ -75,8 +109,10 @@ export function buildBwrapArgv(opts: {
   net: boolean;
   shell: string;
   shellArgs?: string[];
-  /** Extra device nodes to expose read-write (e.g. /dev/nvidia0 for CUDA). */
+  /** Extra device nodes to expose (--dev-bind, must exist). */
   devBinds?: string[];
+  /** GPU nodes overlaid on `--dev /dev` via --dev-bind-try (ai-safe pattern). */
+  gpuDevBindTry?: string[];
   /** setsid() for TIOCSTI-injection hardening. Off by default: it detaches the
    *  controlling tty, which can break interactive job control over a PTY. */
   newSession?: boolean;
@@ -110,6 +146,7 @@ export function buildBwrapArgv(opts: {
   if (opts.unprivUid != null && opts.unprivGid != null) {
     args.push('--unshare-user', '--uid', String(opts.unprivUid), '--gid', String(opts.unprivGid));
   }
+  for (const dev of opts.gpuDevBindTry ?? []) args.push('--dev-bind-try', dev, dev);
   for (const dev of opts.devBinds ?? []) args.push('--dev-bind', dev, dev);
   if (!opts.net) args.push('--unshare-net');
   if (opts.newSession) args.push('--new-session');
@@ -138,6 +175,7 @@ export function buildSeatbeltProfile(opts: { writable: string; home: string; net
     '(allow sysctl-read)',
     '(allow mach*)',
     '(allow ipc*)',
+    ...(buildGpuSeatbeltRules('darwin')),
     '(allow file-read*)',
     // Terminal ioctls (tcsetattr for ZLE raw mode, tcsetpgrp for job control,
     // window-size, …) are a distinct Seatbelt operation from file-write*. Without
@@ -186,6 +224,9 @@ export function buildSandboxCommand(
     net: boolean;
     shell: string;
     shellArgs?: string[];
+    /** Linux: extra /dev nodes (default: auto-discovered GPU devices). */
+    devBinds?: string[];
+    gpuDevBindTry?: string[];
     /** Linux only: remap the sandboxed process to this non-root id (set when the
      *  server runs as root, so agents that refuse root still work). */
     unprivUid?: number;
@@ -204,6 +245,7 @@ export function buildSandboxCommand(
     };
   }
   // Default: Linux bubblewrap.
+  const gpuDevBindTry = opts.gpuDevBindTry ?? discoverGpuDevBinds('linux');
   return {
     file: 'bwrap',
     args: buildBwrapArgv({
@@ -212,6 +254,8 @@ export function buildSandboxCommand(
       net: opts.net,
       shell: opts.shell,
       shellArgs: opts.shellArgs,
+      gpuDevBindTry,
+      devBinds: opts.devBinds,
       unprivUid: opts.unprivUid,
       unprivGid: opts.unprivGid,
     }),

@@ -4,6 +4,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.7.3] - 2026-06-05
+
+### 修复
+
+- **沙箱内无法使用 GPU**：
+  - **macOS**：Seatbelt 新增 IOKit/Metal 规则（`AGXDeviceUserClient`、`IOGPUDeviceUserClient`、`MTLCompilerService`），PyTorch MPS / MLX 等可在沙箱会话中访问 GPU。
+  - **Linux**：自动 `--dev-bind-try` 挂载 `/dev/nvidia*`（与 `best_ai/ai-safe` 相同策略：先 `--dev /dev` 最小 devtmpfs，再叠 NVIDIA 字符设备，不暴露块设备）。
+
 ## [1.7.2] - 2026-06-04
 
 ### 修复

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveSandboxDir, buildBwrapArgv, buildSeatbeltProfile, buildSandboxCommand, sandboxUnprivIds } from '../src/server/pty/sandbox.js';
+import { resolveSandboxDir, buildBwrapArgv, buildSeatbeltProfile, buildSandboxCommand, sandboxUnprivIds, discoverGpuDevBinds, buildGpuSeatbeltRules } from '../src/server/pty/sandbox.js';
 
 describe('resolveSandboxDir', () => {
   const root = '/srv/agent';
@@ -71,9 +71,16 @@ describe('buildBwrapArgv', () => {
     expect(a.slice(sep)).toEqual(['--', '/bin/bash', '-l']);
   });
 
-  it('exposes extra device nodes when requested', () => {
-    const a = buildBwrapArgv({ ...base, net: true, devBinds: ['/dev/nvidia0'] });
-    expect(a.join(' ')).toContain('--dev-bind /dev/nvidia0 /dev/nvidia0');
+  it('overlays NVIDIA GPU nodes with --dev-bind-try (ai-safe pattern)', () => {
+    const a = buildBwrapArgv({ ...base, net: true, gpuDevBindTry: ['/dev/nvidia0', '/dev/nvidiactl'] });
+    expect(a.join(' ')).toContain('--dev-bind-try /dev/nvidia0 /dev/nvidia0');
+    expect(a.join(' ')).toContain('--dev-bind-try /dev/nvidiactl /dev/nvidiactl');
+    expect(a.indexOf('--dev /dev')).toBeLessThan(a.indexOf('--dev-bind-try'));
+  });
+
+  it('exposes extra device nodes with --dev-bind when requested', () => {
+    const a = buildBwrapArgv({ ...base, net: true, devBinds: ['/dev/custom0'] });
+    expect(a.join(' ')).toContain('--dev-bind /dev/custom0 /dev/custom0');
   });
 
   it('adds --new-session only when opted in', () => {
@@ -156,6 +163,24 @@ describe('buildSeatbeltProfile (macOS)', () => {
   it('escapes quotes/backslashes in the path', () => {
     const p = buildSeatbeltProfile({ writable: '/w/a"b\\c', home: '/Users/dev', net: false });
     expect(p).toContain('(allow file-write* (subpath "/w/a\\"b\\\\c"))');
+  });
+
+  it('allows Metal GPU IOKit access for PyTorch MPS / MLX', () => {
+    const p = buildSeatbeltProfile({ writable: '/w', home: '/Users/dev', net: true });
+    expect(p).toContain('AGXDeviceUserClient');
+    expect(p).toContain('(allow iokit-get-properties)');
+    expect(p).toContain('com.apple.MTLCompilerService');
+  });
+});
+
+describe('discoverGpuDevBinds', () => {
+  it('returns empty on non-linux platforms', () => {
+    expect(discoverGpuDevBinds('darwin')).toEqual([]);
+  });
+
+  it('buildGpuSeatbeltRules is darwin-only', () => {
+    expect(buildGpuSeatbeltRules('linux')).toEqual([]);
+    expect(buildGpuSeatbeltRules('darwin').length).toBeGreaterThan(0);
   });
 });
 
