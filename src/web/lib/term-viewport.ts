@@ -77,9 +77,45 @@ export function maybeScrollToLiveScreen(term: Terminal, flags: LiveScreenFlags):
   if (!isViewportAtBottom(term)) scrollToLiveScreen(term);
 }
 
-export function pinLiveScreen(term: Terminal, flags: LiveScreenFlags): void {
-  maybeScrollToLiveScreen(term, flags);
-  requestAnimationFrame(() => {
-    maybeScrollToLiveScreen(term, flags);
-  });
+export function readViewportY(term: Terminal): number {
+  try {
+    return term.buffer.active.viewportY;
+  } catch {
+    return 0;
+  }
+}
+
+/** Scroll intent after wheel / page keys — user explicitly moved the viewport. */
+export function gestureScrollIntent(term: Terminal): boolean {
+  return !isViewportNearBottom(term);
+}
+
+/**
+ * Scroll intent from xterm `onScroll` (scrollbar drag). Never *sets* scrolled-up
+ * from geometry alone (output/reflow can leave the viewport off-bottom without
+ * user intent). Only clears near-bottom, or sets when viewportY moved up.
+ */
+export function passiveScrollIntent(
+  term: Terminal,
+  prevViewportY: number,
+  currentUserScrolledUp: boolean,
+): { userScrolledUp: boolean; viewportY: number } {
+  const viewportY = readViewportY(term);
+  if (isViewportNearBottom(term)) return { userScrolledUp: false, viewportY };
+  if (viewportY < prevViewportY) return { userScrolledUp: true, viewportY };
+  return { userScrolledUp: currentUserScrolledUp, viewportY };
+}
+
+export function pinLiveScreen(
+  term: Terminal,
+  flags: LiveScreenFlags,
+  opts?: { force?: boolean },
+): void {
+  const force = opts?.force ?? false;
+  const scroll = () => {
+    if (!shouldStickToLiveScreen(term, flags)) return;
+    if (force || !isViewportAtBottom(term)) scrollToLiveScreen(term);
+  };
+  scroll();
+  requestAnimationFrame(scroll);
 }

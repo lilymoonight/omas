@@ -4,6 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildSessionRcContent,
+  cdWrapHook,
   cwdReportHook,
   sessionDirHook,
   sessionShellArgs,
@@ -26,6 +27,12 @@ describe('cwd-report', () => {
     expect(cwdReportHook('/bin/bash')).toContain('PROMPT_COMMAND');
     expect(cwdReportHook('/usr/bin/fish')).toContain('--on-variable PWD');
     expect(cwdReportHook('/bin/sh')).toBe('');
+  });
+
+  it('wraps cd for immediate OSC 7 in zsh/bash', () => {
+    expect(cdWrapHook('/bin/zsh')).toContain('cd() { builtin cd');
+    expect(cdWrapHook('/bin/bash')).toContain('pushd() { builtin pushd');
+    expect(cdWrapHook('/bin/sh')).toBe('');
   });
 
   it('returns to OMAS_SESSION_CWD after user rc', () => {

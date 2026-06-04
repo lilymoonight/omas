@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  gestureScrollIntent,
   isViewportAtBottom,
   isViewportNearBottom,
   isAltScreenActive,
+  passiveScrollIntent,
   shouldStickToLiveScreen,
   maybeScrollToLiveScreen,
   pinLiveScreen,
@@ -89,6 +91,33 @@ describe('term-viewport', () => {
     pinLiveScreen(term, FLAGS);
     expect(scrollToBottom).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
+  });
+
+  it('pinLiveScreen force scrolls even when geometry says at bottom', () => {
+    vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    });
+    const { term, scrollToBottom } = mockTerm({ viewportY: 50, baseY: 50 });
+    pinLiveScreen(term, FLAGS, { force: true });
+    expect(scrollToBottom).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
+  it('passiveScrollIntent ignores off-bottom geometry without upward motion', () => {
+    const term = mockTerm({ viewportY: 40, baseY: 50 }).term;
+    expect(passiveScrollIntent(term, 40, false)).toEqual({ userScrolledUp: false, viewportY: 40 });
+    expect(passiveScrollIntent(term, 45, false)).toEqual({ userScrolledUp: true, viewportY: 40 });
+  });
+
+  it('passiveScrollIntent clears intent near bottom', () => {
+    const term = mockTerm({ viewportY: 49, baseY: 50 }).term;
+    expect(passiveScrollIntent(term, 10, true)).toEqual({ userScrolledUp: false, viewportY: 49 });
+  });
+
+  it('gestureScrollIntent marks scrolled-up when not near bottom', () => {
+    expect(gestureScrollIntent(mockTerm({ viewportY: 10, baseY: 50 }).term)).toBe(true);
+    expect(gestureScrollIntent(mockTerm({ viewportY: 49, baseY: 50 }).term)).toBe(false);
   });
 
   it('isViewportAtBottom compares viewportY to baseY', () => {

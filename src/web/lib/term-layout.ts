@@ -15,6 +15,7 @@ export const CELL_H = 17;
 
 export const NARROW_BREAKPOINT = 768;
 
-export function sidePanelsForViewport(width: number): number {
-  return width < NARROW_BREAKPOINT ? 0 : SIDE_PANELS_DESKTOP;
+/** Side panels default collapsed — no width reserved for initial PTY estimate. */
+export function sidePanelsForViewport(_width: number): number {
+  return 0;
 }

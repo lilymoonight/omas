@@ -67,8 +67,16 @@
   let drawerLeft = $state(false);
   let drawerRight = $state(false);
 
-  let filesPanel = $state<{ refresh: () => void; onCwdChange: (path: string) => void } | null>(null);
-  let gitPanel = $state<{ refresh: () => void; onCwdChange: (path: string) => void } | null>(null);
+  let filesPanel = $state<{
+    refresh: () => void;
+    onCwdChange: (path: string) => void;
+    onWorkspaceActivity: () => void;
+  } | null>(null);
+  let gitPanel = $state<{
+    refresh: () => void;
+    onCwdChange: (path: string) => void;
+    onWorkspaceActivity: () => void;
+  } | null>(null);
   let xterm = $state<{
     toggleRecording: () => void;
     isRecording: () => boolean;
@@ -142,10 +150,21 @@
 
   function handleShellCwd(path: string): void {
     if (session) session = { ...session, liveCwd: path };
-    filesPanel?.onCwdChange(path);
-    gitPanel?.onCwdChange(path);
+    if (drawerLeft) filesPanel?.onCwdChange(path);
+    if (drawerRight) gitPanel?.onCwdChange(path);
     const folder = folderBasename(path);
     if (folder) setTabTitle({ folder });
+  }
+
+  let workspaceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function scheduleWorkspaceRefresh(): void {
+    if (!drawerLeft && !drawerRight) return;
+    clearTimeout(workspaceRefreshTimer);
+    workspaceRefreshTimer = setTimeout(() => {
+      if (drawerLeft) filesPanel?.onWorkspaceActivity();
+      if (drawerRight) gitPanel?.onWorkspaceActivity();
+    }, 450);
   }
 
   function fmtBytes(n: number): string {
@@ -213,7 +232,7 @@
         );
       }
     }
-    filesPanel?.refresh();
+    if (drawerLeft) filesPanel?.refresh();
     // Keep failures and any still-running uploads on screen; clear the rest.
     setTimeout(() => {
       uploads = uploads.filter((u) => u.status !== 'done');
@@ -246,10 +265,6 @@
     isNarrow = mq.matches;
     onMqChange = (e) => {
       isNarrow = e.matches;
-      if (!e.matches) {
-        drawerLeft = false;
-        drawerRight = false;
-      }
     };
     mq.addEventListener('change', onMqChange);
 
@@ -270,11 +285,15 @@
 
   function toggleDrawer(side: 'left' | 'right'): void {
     if (side === 'left') {
-      drawerLeft = !drawerLeft;
+      const opening = !drawerLeft;
+      drawerLeft = opening;
       if (drawerLeft) drawerRight = false;
+      if (opening) queueMicrotask(() => filesPanel?.refresh());
     } else {
-      drawerRight = !drawerRight;
+      const opening = !drawerRight;
+      drawerRight = opening;
       if (drawerRight) drawerLeft = false;
+      if (opening) queueMicrotask(() => gitPanel?.refresh());
     }
   }
 
@@ -316,12 +335,13 @@
       <Icon name="arrow-left" size={16} />
     </button>
 
-    {#if isNarrow && session}
+    {#if session}
       <button
         class="ghost icon-only drawer-toggle"
         class:active={drawerLeft}
         onclick={() => toggleDrawer('left')}
         aria-label="文件侧栏"
+        aria-expanded={drawerLeft}
         title="文件"
       >
         <Icon name="folder" size={16} />
@@ -352,12 +372,13 @@
       </span>
     {/if}
 
-    {#if isNarrow && session}
+    {#if session}
       <button
         class="ghost icon-only drawer-toggle"
         class:active={drawerRight}
         onclick={() => toggleDrawer('right')}
         aria-label="Git 侧栏"
+        aria-expanded={drawerRight}
         title="Git"
       >
         <Icon name="git-branch" size={16} />
@@ -452,7 +473,9 @@
 
     {#if session}
       <div class="side-slot left">
-        <FilesPanel bind:this={filesPanel} {sessionId} onNewSession={newSessionInDir} />
+        {#if drawerLeft}
+          <FilesPanel bind:this={filesPanel} {sessionId} onNewSession={newSessionInDir} />
+        {/if}
       </div>
     {/if}
 
@@ -479,6 +502,7 @@
           {title}
           onTitle={(t) => (title = t)}
           onCwd={handleShellCwd}
+          onActivity={scheduleWorkspaceRefresh}
           onClientCount={(n) => (clientCount = n)}
           onExit={(info) => (exitInfo = info)}
           onStatus={(s) => (status = s)}
@@ -536,7 +560,9 @@
 
     {#if session}
       <div class="side-slot right">
-        <GitPanel bind:this={gitPanel} {sessionId} />
+        {#if drawerRight}
+          <GitPanel bind:this={gitPanel} {sessionId} />
+        {/if}
       </div>
     {/if}
   </div>
@@ -548,7 +574,7 @@
     path={editingPath}
     root={editingRoot}
     onClose={() => (editingPath = null)}
-    onSaved={() => filesPanel?.refresh()}
+    onSaved={() => { if (drawerLeft) filesPanel?.refresh(); }}
   />
 {/if}
 
@@ -670,6 +696,12 @@
     flex-shrink: 0;
     min-height: 0;
     display: flex;
+  }
+
+  .body:not(.left-open) .side-slot.left,
+  .body:not(.right-open) .side-slot.right {
+    width: 0;
+    overflow: hidden;
   }
 
   .term {
@@ -850,9 +882,5 @@
       right: 0;
     }
 
-    .body.narrow:not(.left-open):not(.right-open) .side-slot {
-      width: 0;
-      overflow: hidden;
-    }
   }
 </style>

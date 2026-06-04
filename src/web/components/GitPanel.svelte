@@ -19,6 +19,7 @@
 
   let status = $state<GitStatus | null>(null);
   let inFlight = false;
+  let pendingRefresh = false;
   let viewing = $state<{ path: string; staged: boolean } | null>(null);
 
   async function open(path: string, staged: boolean): Promise<void> {
@@ -33,7 +34,10 @@
   }
 
   async function refreshInternal() {
-    if (inFlight) return;
+    if (inFlight) {
+      pendingRefresh = true;
+      return;
+    }
     inFlight = true;
     try {
       const next = await api.gitStatus(sessionId);
@@ -42,6 +46,10 @@
       // keep last status on error
     } finally {
       inFlight = false;
+      if (pendingRefresh) {
+        pendingRefresh = false;
+        void refreshInternal();
+      }
     }
   }
 
@@ -51,6 +59,11 @@
 
   /** Refresh git status when the shell cwd changes. */
   export function onCwdChange(_path: string): void {
+    void refreshInternal();
+  }
+
+  /** Refresh git status after terminal activity in the same cwd. */
+  export function onWorkspaceActivity(): void {
     void refreshInternal();
   }
 

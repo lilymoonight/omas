@@ -47,7 +47,7 @@
 
   /** Called when the shell reports a new cwd (OSC 7 over WebSocket). */
   export function onCwdChange(path: string): void {
-    const cwdChanged = root !== null && root !== path;
+    const cwdChanged = root !== path;
     root = path;
     error = null;
     loadingRoot = false;
@@ -57,6 +57,12 @@
       truncatedDirs = new Set();
     }
     void loadDir(ROOT_KEY, { force: true, silent: !cwdChanged });
+  }
+
+  /** Refresh listing after terminal activity (same cwd). */
+  export function onWorkspaceActivity(): void {
+    if (!root) return;
+    void loadDir(ROOT_KEY, { force: true, silent: true });
   }
 
   async function refreshAll(resetExpanded: boolean) {

@@ -62,6 +62,21 @@ export function cwdReportHook(shell: string): string {
   }
 }
 
+/** Wrap cd/pushd/popd so cwd is reported immediately (bash PROMPT_COMMAND is late). */
+export function cdWrapHook(shell: string): string {
+  switch (shellKind(shell)) {
+    case 'zsh':
+    case 'bash':
+      return [
+        'cd() { builtin cd "$@" && __omas_report_cwd; }',
+        'pushd() { builtin pushd "$@" && __omas_report_cwd; }',
+        'popd() { builtin popd "$@" && __omas_report_cwd; }',
+      ].join('\n');
+    default:
+      return '';
+  }
+}
+
 /** Return to the session workspace after user rc (which may cd elsewhere). */
 export function sessionDirHook(shell: string): string {
   switch (shellKind(shell)) {
@@ -107,6 +122,7 @@ export type SessionRcOpts = {
 
 export function buildSessionRcContent(opts: SessionRcOpts): string {
   const hook = cwdReportHook(opts.shell);
+  const cdWrap = cdWrapHook(opts.shell);
   const tail = sessionDirHook(opts.shell);
   const extra = opts.extra?.trim();
   const zdot = quotedHomeRc(opts.home, '.zshrc');
@@ -117,6 +133,7 @@ export function buildSessionRcContent(opts: SessionRcOpts): string {
         '# omas session rc',
         `[ -f ${zdot} ] && . ${zdot}`,
         hook,
+        cdWrap,
         extra,
         tail,
       ].filter(Boolean).join('\n') + '\n';
@@ -125,6 +142,7 @@ export function buildSessionRcContent(opts: SessionRcOpts): string {
         '# omas session rc',
         `[ -f ${bashrc} ] && . ${bashrc}`,
         hook,
+        cdWrap,
         extra,
         tail,
       ].filter(Boolean).join('\n') + '\n';

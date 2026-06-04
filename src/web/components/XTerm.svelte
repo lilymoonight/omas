@@ -13,9 +13,11 @@
   import { canSyncTermSize, type AttachPhase } from '../lib/attach-sync.js';
   import { TERM_FONT_SIZE, TERM_LINE_HEIGHT } from '../lib/term-layout.js';
   import {
-    isViewportNearBottom,
+    gestureScrollIntent,
+    passiveScrollIntent,
     pinLiveScreen,
     maybeScrollToLiveScreen,
+    readViewportY,
     shouldStickToLiveScreen,
   } from '../lib/term-viewport.js';
   import { createTermWriteBatch, type TermWriteBatch } from '../lib/term-write-batch.js';
@@ -86,6 +88,8 @@
     title?: string;
     onTitle?: (title: string) => void;
     onCwd?: (path: string) => void;
+    /** Fired when PTY output arrives (debounce in parent for sidebar refresh). */
+    onActivity?: () => void;
     onClientCount?: (n: number) => void;
     onExit?: (info: { code: number | null; signal: string | null }) => void;
     onStatus?: (status: 'connecting' | 'open' | 'closed') => void;
@@ -99,6 +103,7 @@
     title = '终端',
     onTitle,
     onCwd,
+    onActivity,
     onClientCount,
     onExit,
     onStatus,
@@ -153,6 +158,9 @@
    * redraws / resizes can't be misread as "scrolled up".
    */
   let userScrolledUp = false;
+  let lastViewportY = 0;
+  /** Ignore onScroll echoes from our own scrollToBottom calls. */
+  let suppressScrollIntent = false;
   /** Re-evaluate scroll intent after a user gesture settles. */
   let scrollIntentRaf: number | undefined;
   let scrollSub: { dispose(): void } | undefined;
@@ -175,22 +183,35 @@
     return { stickToLiveScreen, pendingScrollBottom, userScrolledUp };
   }
 
-  /**
-   * Recompute scroll intent from the *current* viewport after a user gesture.
-   * The alt screen has no scrollback, so intent only applies to the normal
-   * buffer; there we treat "near the bottom" as still pinned to live.
-   */
-  function refreshScrollIntent(): void {
+  function refreshScrollIntentFromGesture(): void {
     if (scrollIntentRaf !== undefined) cancelAnimationFrame(scrollIntentRaf);
     scrollIntentRaf = requestAnimationFrame(() => {
       scrollIntentRaf = undefined;
       if (pendingScrollBottom) return;
-      userScrolledUp = !isViewportNearBottom(term);
+      userScrolledUp = gestureScrollIntent(term);
+      lastViewportY = readViewportY(term);
     });
   }
 
-  function pinLive() {
-    pinLiveScreen(term, liveFlags());
+  function onTerminalScroll(): void {
+    if (suppressScrollIntent || pendingScrollBottom) return;
+    if (scrollIntentRaf !== undefined) cancelAnimationFrame(scrollIntentRaf);
+    scrollIntentRaf = requestAnimationFrame(() => {
+      scrollIntentRaf = undefined;
+      if (suppressScrollIntent || pendingScrollBottom) return;
+      const next = passiveScrollIntent(term, lastViewportY, userScrolledUp);
+      userScrolledUp = next.userScrolledUp;
+      lastViewportY = next.viewportY;
+    });
+  }
+
+  function pinLive(force = false) {
+    suppressScrollIntent = true;
+    pinLiveScreen(term, liveFlags(), { force });
+    requestAnimationFrame(() => {
+      lastViewportY = readViewportY(term);
+      suppressScrollIntent = false;
+    });
   }
 
   function finishRestoreScroll(): void {
@@ -253,7 +274,8 @@
       if (resized) {
         socket?.send({ type: 'resize', cols: term.cols, rows: term.rows });
       }
-      if (resized || pin) pinLive();
+      if (resized && pin) pinLive(true);
+      else if (pin) pinLive();
     } catch { /* hidden */ }
   }
 
@@ -419,8 +441,7 @@
     matchIndex = 0;
     matchTotal = 0;
     term?.focus();
-    // Re-evaluate whether we're back at the live screen.
-    refreshScrollIntent();
+    refreshScrollIntentFromGesture();
   }
 
   function toggleSearch(): void {
@@ -511,6 +532,7 @@
       onClientCount?.(msg.clientCount);
     });
     socket.on('data', (bytes) => {
+      onActivity?.();
       if (recording) recordChunk(bytes);
       const onDone = () => {
         if (pendingScrollBottom) {
@@ -537,7 +559,11 @@
 
     // A read-only viewer never drives the PTY: no input, no resize, no title push.
     if (!shareToken) {
-      term.onData((data) => socket.send({ type: 'input', data }));
+      term.onData((data) => {
+        userScrolledUp = false;
+        socket.send({ type: 'input', data });
+        pinLive(true);
+      });
       term.onResize(({ cols, rows }) => {
         if (!canSyncSize() || suppressResizeNotify) return;
         socket.send({ type: 'resize', cols, rows });
@@ -562,8 +588,8 @@
     // geometry. A resize/reflow or TUI redraw transiently moves viewportY, and
     // reading that as "scrolled up" is exactly what snapped the viewport to old
     // scrollback at random. Wheel + scroll keys cover scrolling up and back.
-    host.addEventListener('wheel', refreshScrollIntent, { passive: true });
-    scrollSub = term.onScroll(() => refreshScrollIntent());
+    host.addEventListener('wheel', refreshScrollIntentFromGesture, { passive: true });
+    scrollSub = term.onScroll(onTerminalScroll);
     term.attachCustomKeyEventHandler((e) => {
       // Cmd/Ctrl+F opens scrollback search instead of the browser's find — but
       // only on the normal buffer. On the alt screen a full-screen TUI (vim,
@@ -581,11 +607,12 @@
       }
       if (e.type === 'keydown' && (e.key === 'PageUp' || e.key === 'PageDown'
         || (e.shiftKey && (e.key === 'Home' || e.key === 'End')))) {
-        refreshScrollIntent();
+        refreshScrollIntentFromGesture();
       }
       return true;
     });
 
+    lastViewportY = readViewportY(term);
     socket.connect();
     setTimeout(() => term.focus(), 0);
   });
@@ -598,7 +625,7 @@
     if (syncDebounceTimer !== undefined) clearTimeout(syncDebounceTimer);
     if (resizeRaf !== undefined) cancelAnimationFrame(resizeRaf);
     if (scrollIntentRaf !== undefined) cancelAnimationFrame(scrollIntentRaf);
-    host?.removeEventListener('wheel', refreshScrollIntent);
+    host?.removeEventListener('wheel', refreshScrollIntentFromGesture);
     scrollSub?.dispose();
     resizeObserver?.disconnect();
     socket?.close();
