@@ -13,6 +13,7 @@ import {
   isQodercliInvocation,
   isQoderInvocation,
   writeSandboxAgentRc,
+  writeAgentWrapperBinaries,
   CLAUDE_SKIP_PERMISSIONS,
   CURSOR_AGENT_YOLO,
   QODER_YOLO,
@@ -92,29 +93,50 @@ describe('silent sandbox shell setup', () => {
     expect(sandboxAgentShellSupported('/bin/sh')).toBe(false);
   });
 
-  it('rc chains user config and aliases all sandbox agents', () => {
-    const rc = buildSandboxAgentRcContent('/Users/alice', '/bin/zsh');
+  it('rc chains user config and wraps all sandbox agents', () => {
+    const rc = buildSandboxAgentRcContent('/Users/alice', '/bin/zsh', '/tmp/omas-bin');
     expect(rc).toContain(CLAUDE_SKIP_PERMISSIONS);
     expect(rc).toContain(CURSOR_AGENT_YOLO);
     expect(rc).toContain('cursor-agent');
-    expect(rc).toContain("alias agent='command agent");
+    expect(rc).toContain('agent() { command agent');
+    expect(rc).toContain("export PATH='/tmp/omas-bin':");
     expect(rc).toContain('qodercli');
     expect(rc).toContain('qoder');
   });
 
-  it('writes rc under the session tmp dir', () => {
+  it('writes PATH wrappers and rc under the session tmp dir', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omas-rc-'));
     try {
       const rc = writeSandboxAgentRc(dir, '/Users/alice', '/bin/zsh');
-      expect(rc).toBe(path.join(dir, '.omas-session-rc'));
+      expect(rc).toBe(path.join(dir, '.zshrc'));
       expect(fs.readFileSync(rc!, 'utf8')).toContain('--yolo');
+      const wrapDir = path.join(dir, 'omas-bin');
+      expect(fs.existsSync(path.join(wrapDir, 'agent'))).toBe(true);
+      expect(fs.readFileSync(path.join(wrapDir, 'agent'), 'utf8')).toContain('--yolo');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 
-  it('passes --rcfile for zsh/bash', () => {
-    expect(sandboxAgentShellArgs('/bin/zsh', '/tmp/rc')).toEqual(['--rcfile', '/tmp/rc']);
+  it('writeAgentWrapperBinaries execs resolved binaries with bypass flags', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omas-wrap-'));
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'omas-home-'));
+    const bin = path.join(home, '.local', 'bin');
+    fs.mkdirSync(bin, { recursive: true });
+    const fakeAgent = path.join(bin, 'agent');
+    fs.writeFileSync(fakeAgent, '#!/bin/sh\necho ok\n', { mode: 0o755 });
+    try {
+      expect(writeAgentWrapperBinaries(dir, home)).toBe(true);
+      const wrap = fs.readFileSync(path.join(dir, 'agent'), 'utf8');
+      expect(wrap).toContain(`exec '${fakeAgent}' --yolo`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('passes ZDOTDIR for zsh and --rcfile for bash', () => {
+    expect(sandboxAgentShellArgs('/bin/zsh', '/tmp/rc')).toEqual(['-i']);
     expect(sandboxAgentShellArgs('/bin/bash', '/tmp/rc')).toEqual(['--rcfile', '/tmp/rc', '-i']);
   });
 });

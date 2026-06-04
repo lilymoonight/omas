@@ -14,6 +14,22 @@ function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+function quotedHomeRc(home: string, name: string): string {
+  return shellQuote(path.join(home, name));
+}
+
+function sessionRcBasename(shell: string): string | null {
+  switch (shellKind(shell)) {
+    case 'zsh':
+      return '.zshrc';
+    case 'bash':
+    case 'fish':
+      return '.omas-session-rc';
+    default:
+      return null;
+  }
+}
+
 /** Shell snippet that prints OSC 7 for the current `$PWD`. */
 export function cwdReportHook(shell: string): string {
   switch (shellKind(shell)) {
@@ -23,7 +39,6 @@ export function cwdReportHook(shell: string): string {
         '  printf "\\033]7;file://%s%s\\033\\\\" "${HOST-${HOSTNAME-$(hostname)}}" "$PWD"',
         '}',
         'chpwd_functions+=(__omas_report_cwd)',
-        '__omas_report_cwd',
       ].join('\n');
     case 'bash':
       return [
@@ -35,14 +50,48 @@ export function cwdReportHook(shell: string): string {
         'else',
         '  PROMPT_COMMAND="__omas_report_cwd"',
         'fi',
-        '__omas_report_cwd',
       ].join('\n');
     case 'fish':
       return [
         'function __omas_report_cwd --on-variable PWD',
         '  printf "\\033]7;file://%s%s\\033\\\\" (hostname) "$PWD"',
         'end',
-        '__omas_report_cwd',
+      ].join('\n');
+    default:
+      return '';
+  }
+}
+
+/** Return to the session workspace after user rc (which may cd elsewhere). */
+export function sessionDirHook(shell: string): string {
+  switch (shellKind(shell)) {
+    case 'zsh':
+      return [
+        '__omas_cd_session() {',
+        '  [[ -z "$OMAS_SESSION_CWD" || ! -d "$OMAS_SESSION_CWD" ]] && return',
+        '  builtin cd -- "$OMAS_SESSION_CWD" 2>/dev/null || return',
+        '  __omas_report_cwd',
+        '}',
+        '__omas_cd_session',
+      ].join('\n');
+    case 'bash':
+      return [
+        '__omas_cd_session() {',
+        '  [[ -z "$OMAS_SESSION_CWD" || ! -d "$OMAS_SESSION_CWD" ]] && return',
+        '  cd "$OMAS_SESSION_CWD" 2>/dev/null || return',
+        '  __omas_report_cwd',
+        '}',
+        '__omas_cd_session',
+      ].join('\n');
+    case 'fish':
+      return [
+        'function __omas_cd_session',
+        '  if test -n "$OMAS_SESSION_CWD"; and test -d "$OMAS_SESSION_CWD"',
+        '    cd "$OMAS_SESSION_CWD"',
+        '    __omas_report_cwd',
+        '  end',
+        'end',
+        '__omas_cd_session',
       ].join('\n');
     default:
       return '';
@@ -58,25 +107,29 @@ export type SessionRcOpts = {
 
 export function buildSessionRcContent(opts: SessionRcOpts): string {
   const hook = cwdReportHook(opts.shell);
+  const tail = sessionDirHook(opts.shell);
   const extra = opts.extra?.trim();
-  const h = shellQuote(opts.home);
+  const zdot = quotedHomeRc(opts.home, '.zshrc');
+  const bashrc = quotedHomeRc(opts.home, '.bashrc');
   switch (shellKind(opts.shell)) {
     case 'zsh':
       return [
         '# omas session rc',
-        `[ -f ${h}/.zshrc ] && . ${h}/.zshrc`,
+        `[ -f ${zdot} ] && . ${zdot}`,
         hook,
         extra,
+        tail,
       ].filter(Boolean).join('\n') + '\n';
     case 'bash':
       return [
         '# omas session rc',
-        `[ -f ${h}/.bashrc ] && . ${h}/.bashrc`,
+        `[ -f ${bashrc} ] && . ${bashrc}`,
         hook,
         extra,
+        tail,
       ].filter(Boolean).join('\n') + '\n';
     case 'fish':
-      return ['# omas session rc', hook, extra].filter(Boolean).join('\n') + '\n';
+      return ['# omas session rc', hook, extra, tail].filter(Boolean).join('\n') + '\n';
     default:
       return hook ? `${hook}\n` : '';
   }
@@ -85,7 +138,8 @@ export function buildSessionRcContent(opts: SessionRcOpts): string {
 export function sessionShellArgs(shell: string, rcPath: string): string[] {
   switch (shellKind(shell)) {
     case 'zsh':
-      return ['--rcfile', rcPath];
+      // macOS /bin/zsh (5.9) has no --rcfile; load via ZDOTDIR instead.
+      return ['-i'];
     case 'bash':
       return ['--rcfile', rcPath, '-i'];
     case 'fish':
@@ -95,10 +149,17 @@ export function sessionShellArgs(shell: string, rcPath: string): string[] {
   }
 }
 
+/** Extra env for session rc loading (zsh uses ZDOTDIR). */
+export function sessionShellEnv(shell: string, rcDir: string): Record<string, string> {
+  if (shellKind(shell) === 'zsh') return { ZDOTDIR: rcDir };
+  return {};
+}
+
 export function writeSessionRc(tmpDir: string, opts: SessionRcOpts): string | null {
-  if (!shellKind(opts.shell)) return null;
+  const base = sessionRcBasename(opts.shell);
+  if (!base) return null;
   fs.mkdirSync(tmpDir, { recursive: true });
-  const rcPath = path.join(tmpDir, '.omas-session-rc');
+  const rcPath = path.join(tmpDir, base);
   fs.writeFileSync(rcPath, buildSessionRcContent(opts), { mode: 0o600 });
   return rcPath;
 }

@@ -4,6 +4,14 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.7.2] - 2026-06-04
+
+### 修复
+
+- **macOS 新会话立刻退出 /「会话不存在」**：系统 `/bin/zsh` 不支持 `--rcfile`；改为 `ZDOTDIR` + 目录内 `.zshrc` 加载 session rc，并修正 rc 里 home 路径引号（`'$HOME'/.zshrc` → `'$HOME/.zshrc'`）。
+- **新会话未进入选定工作目录**：用户 `~/.zshrc` 可能在启动时 `cd` 到别处，OSC 7 过早上报错误 cwd；现通过 `OMAS_SESSION_CWD` 在 rc 末尾强制回到会话目录再上报。
+- **沙箱内 `agent` 未自动注入 `--yolo`**：alias 易被用户 shell 函数覆盖；改为 PATH 包装脚本（`$TMPDIR/omas-bin/`）+ shell 函数双重注入，并解析 `~/.local/bin` 等稀疏 LaunchAgent PATH。
+
 ## [1.7.1] - 2026-06-04
 
 ### 新增

@@ -18,7 +18,7 @@ type SerializeAddon = InstanceType<typeof SerializeAddon>;
 import { RingBuffer } from './ring.js';
 import { ptyLocaleEnv } from './locale.js';
 import { resolveSandboxDir, buildSandboxCommand, sandboxUnprivIds, type SandboxSettings } from './sandbox.js';
-import { sessionShellArgs, writeSessionRc } from './cwd-report.js';
+import { sessionShellArgs, sessionShellEnv, writeSessionRc } from './cwd-report.js';
 import { augmentSandboxAgentCommand, writeSandboxAgentRc } from './agent-sandbox.js';
 import { Osc7CwdParser } from './osc-cwd.js';
 import { buildPrivilegeDrop, type OsUserInfo } from './os-user.js';
@@ -163,6 +163,7 @@ export class PtySession extends EventEmitter {
       const unpriv = sandboxUnprivIds();
       const rcPath = writeSandboxAgentRc(spec.tmp, home, this.shell);
       const shellArgs = rcPath ? sessionShellArgs(this.shell, rcPath) : [];
+      const rcEnv = rcPath ? sessionShellEnv(this.shell, path.dirname(rcPath)) : {};
       const cmd = buildSandboxCommand(process.platform, {
         ...spec,
         shell: this.shell,
@@ -172,7 +173,7 @@ export class PtySession extends EventEmitter {
       });
       spawnFile = cmd.file;
       spawnArgs = cmd.args;
-      spawnEnv = cmd.env;
+      spawnEnv = { ...cmd.env, ...rcEnv };
     } else {
       // For OS-user sessions, default to the target user's home (root may own
       // the server's cwd; the user might not be able to reach it).
@@ -184,7 +185,10 @@ export class PtySession extends EventEmitter {
 
     if (!opts.sandbox) {
       const rcPath = writeSessionRc(rcDir, { home: rcHome, shell: this.shell });
-      if (rcPath) spawnArgs = [...sessionShellArgs(this.shell, rcPath), ...spawnArgs];
+      if (rcPath) {
+        spawnArgs = [...sessionShellArgs(this.shell, rcPath), ...spawnArgs];
+        spawnEnv = { ...spawnEnv, ...sessionShellEnv(this.shell, path.dirname(rcPath)) };
+      }
     }
 
     this.liveCwd = this.cwd;
@@ -233,6 +237,7 @@ export class PtySession extends EventEmitter {
         COLORTERM: 'truecolor',
         COLUMNS: String(this.cols),
         LINES: String(this.rows),
+        OMAS_SESSION_CWD: this.cwd,
         ...spawnEnv,
       },
     });
