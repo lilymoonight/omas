@@ -89,7 +89,13 @@ export type FsListResp = { root: string; path: string; entries: FsEntry[]; trunc
 export type FsReadResp =
   | { path: string; content: string; clipped: boolean; binary: false; size: number }
   | { path: string; binary: true; clipped: false; size: number };
-export type FsUploadResp = { ok: true; path: string; name: string; size: number };
+export type FsCwdResp = {
+  cwd: string;
+  liveCwd?: string;
+  workspace?: string;
+  sandboxed?: boolean;
+  readOnly?: boolean;
+};
 
 export type PublicSite = { slug: string; url: string; spa: boolean; root: string; cli: boolean };
 export type SitesResp = { canPersist: boolean; sites: PublicSite[] };
@@ -270,7 +276,7 @@ export const api = {
     ),
   saveGitFile: (id: string, path: string, content: string) =>
     req<{ ok: true; path: string; size: number }>('PUT', `sessions/${id}/git-file`, { path, content }),
-  fsCwd: (id: string) => req<{ cwd: string }>('GET', `sessions/${id}/fs/cwd`),
+  fsCwd: (id: string) => req<FsCwdResp>('GET', `sessions/${id}/fs/cwd`),
   fsList: (id: string, path = '') =>
     req<FsListResp>('GET', `sessions/${id}/fs/list?path=${encodeURIComponent(path)}`),
   fsRead: (id: string, path: string) =>

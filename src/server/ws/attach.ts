@@ -44,16 +44,15 @@ export function attachClient(
       truncated = false;
       lastAckSeq = dump.seq;
     } else {
-      const snap = session.serializeSnapshot();
+      const snap = session.fullSnapshot();
       initialBytes = snap.bytes;
       truncated = true;
       lastAckSeq = session.ring.currentSeq;
     }
   } else {
-    // Read-only viewers join mid-session, so give them the full scrollback to
-    // browse; interactive clients get just the live screen (scrollback omitted
-    // to avoid the viewport sticking to ancient history on reconnect).
-    const snap = readOnly ? session.fullSnapshot() : session.serializeSnapshot();
+    // Fresh attach (page reload / new tab): ship scrollback so the user can
+    // wheel up immediately. The client scrolls to the live screen after restore.
+    const snap = session.fullSnapshot();
     initialBytes = snap.bytes;
     truncated = true;
     lastAckSeq = session.ring.currentSeq;

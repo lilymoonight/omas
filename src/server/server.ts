@@ -31,6 +31,7 @@ import { parsePublishArgs, type SiteSpec } from './sites/util.js';
 import { SiteManager } from './sites/manager.js';
 import { registerSiteRoutes } from './sites/routes.js';
 import { sandboxAvailable, type SandboxSettings } from './pty/sandbox.js';
+import { serverIsRoot } from './pty/os-user.js';
 
 export type ServerConfig = {
   /** Listen host. CLI overrides config; falls back to 127.0.0.1. */
@@ -104,9 +105,12 @@ export async function createServer(config: ServerConfig) {
       if (!sandboxAvailable()) {
         throw new Error(
           process.platform === 'linux'
-            ? 'sandboxing is enabled but bubblewrap (bwrap) is unavailable. '
-              + 'It requires unprivileged user namespaces. Install bwrap '
-              + '(e.g. `apt install bubblewrap`) or remove the sandbox setting.'
+            ? serverIsRoot()
+              ? 'sandboxing is enabled but bubblewrap user namespaces are unavailable. '
+                + 'Root sandboxes require `bwrap --unshare-user` (check kernel.unprivileged_userns_clone, '
+                + 'max_user_namespaces, and container seccomp). Install bwrap or remove the sandbox setting.'
+              : 'sandboxing is enabled but bubblewrap (bwrap) is unavailable. '
+                + 'Install bwrap (e.g. `apt install bubblewrap`) or remove the sandbox setting.'
             : process.platform === 'darwin'
               ? 'sandboxing is enabled but sandbox-exec is not on PATH (expected at /usr/bin/sandbox-exec).'
               : `sandboxing is not supported on this platform (${process.platform}); use Linux (bwrap) or macOS (sandbox-exec).`,

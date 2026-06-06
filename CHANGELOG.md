@@ -4,6 +4,23 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.7.5] - 2026-06-04
+
+### 新增
+
+- **沙箱状态徽章**：终端顶栏显示无沙箱 / 沙箱内 / 沙箱外三种状态（shield 图标），hover 展示沙箱根、工作目录、当前目录与读写说明。
+
+### 修复
+
+- **重进终端页看不到历史**：WebSocket 新 attach 改为发送完整 scrollback（`fullSnapshot`），客户端恢复后滚到 live screen。
+- **沙箱会话 `cd` 到工作区外时侧栏无法浏览**：文件树跟随 shell 实时 cwd；只读区域可 list/read/download，写/upload 仍限制在工作目录内。
+- **root 沙箱无法用 SSH 凭证 / Claude 跳过权限**：对齐 `best_ai/ai-safe`——沙箱内保持 root 与真实 `$HOME`（`/root/.ssh` 可用），注入 `IS_SANDBOX=1` 使 `--dangerously-skip-permissions` 在 root 下生效；Linux 绑定 `SSH_AUTH_SOCK` 进 bwrap 私有 `/tmp`。
+- **root 沙箱可被 remount 绕过**：Linux root 服务下 bwrap 加 `--unshare-user`（**不** remap uid），与 ai-safe 相同，阻断 `mount -o remount,rw` 逃逸；启动时探测 userns 可用性。
+
+### 变更
+
+- **撤销 1.7.0 的 root uid 1000 降权**：不再 `--uid/--gid` 映射；改由 `IS_SANDBOX=1` + userns 隔离兼顾 Claude 与 root 凭证。
+
 ## [1.7.4] - 2026-06-05
 
 ### 新增

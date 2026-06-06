@@ -13,6 +13,9 @@ import {
   relFromAbs,
   resolveUnderCwd,
   sessionCwd,
+  fsBrowseRoot,
+  fsBrowseContext,
+  sandboxAllowsWrite,
 } from '../pty/fs-util.js';
 import {
   fsStat,
@@ -131,6 +134,9 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
 
     const dir = await ensureDir(reply, session.osUserInfo, cwd, parsed.data.dir ?? '');
     if (!dir) return reply;
+    if (!sandboxAllowsWrite(session, dir.abs)) {
+      return reply.code(403).send({ error: 'read_only_outside_workspace' });
+    }
 
     try {
       const { finalAbs, size } = await fsUpload(session.osUserInfo, dir.abs, base, body);
@@ -164,6 +170,9 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
 
     const dir = await ensureDir(reply, session.osUserInfo, cwd, parsed.data.dir ?? '');
     if (!dir) return reply;
+    if (!sandboxAllowsWrite(session, dir.abs)) {
+      return reply.code(403).send({ error: 'read_only_outside_workspace' });
+    }
 
     try {
       const { uploadId } = await uploads.begin({
@@ -244,16 +253,22 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
   app.get('/api/sessions/:id/fs/cwd', async (req: any, reply: any) => {
     const session = hub.get(req.params.id);
     if (!session) return reply.code(404).send({ error: 'session_not_found' });
-    const cwd = await sessionCwd(session);
-    if (!cwd) return reply.code(404).send({ error: 'no_cwd' });
-    return { cwd };
+    const ctx = await fsBrowseContext(session);
+    if (!ctx.root) return reply.code(404).send({ error: 'no_cwd' });
+    return {
+      cwd: ctx.root,
+      liveCwd: ctx.liveCwd ?? undefined,
+      workspace: ctx.workspace ?? undefined,
+      sandboxed: session.sandboxed || undefined,
+      readOnly: ctx.readOnly || undefined,
+    };
   });
 
   app.get('/api/sessions/:id/fs/list', async (req: any, reply: any) => {
     const session = hub.get(req.params.id);
     if (!session) return reply.code(404).send({ error: 'session_not_found' });
 
-    const cwd = await sessionCwd(session);
+    const cwd = await fsBrowseRoot(session);
     if (!cwd) return reply.code(404).send({ error: 'no_cwd' });
 
     const relPath = String(req.query?.path ?? '');
@@ -302,7 +317,7 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     const session = hub.get(req.params.id);
     if (!session) return reply.code(404).send({ error: 'session_not_found' });
 
-    const cwd = await sessionCwd(session);
+    const cwd = await fsBrowseRoot(session);
     if (!cwd) return reply.code(404).send({ error: 'no_cwd' });
 
     const relPath = String(req.query?.path ?? '').trim();
@@ -332,7 +347,7 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     const session = hub.get(req.params.id);
     if (!session) return reply.code(404).send({ error: 'session_not_found' });
 
-    const cwd = await sessionCwd(session);
+    const cwd = await fsBrowseRoot(session);
     if (!cwd) return reply.code(404).send({ error: 'no_cwd' });
 
     const relPath = String(req.query?.path ?? '');
@@ -394,11 +409,14 @@ export function registerFsRoutes(app: App, hub: SessionHub, uploads: UploadStore
     const parsed = writeSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
 
-    const cwd = await sessionCwd(session);
+    const cwd = await fsBrowseRoot(session);
     if (!cwd) return reply.code(404).send({ error: 'no_cwd' });
 
     const resolved = resolveUnderCwd(cwd, parsed.data.path);
     if ('error' in resolved) return reply.code(400).send({ error: resolved.error });
+    if (!sandboxAllowsWrite(session, resolved.abs)) {
+      return reply.code(403).send({ error: 'read_only_outside_workspace' });
+    }
     if (Buffer.byteLength(parsed.data.content, 'utf8') > MAX_EDIT_BYTES) {
       return reply.code(413).send({ error: 'too_large' });
     }

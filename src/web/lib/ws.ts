@@ -29,8 +29,8 @@ export class SessionSocket {
   };
 
   // lastSeq lives only for the lifetime of this SessionSocket. A new XTerm
-  // mount means a blank screen, which means we want the server to dump the
-  // full scrollback again — don't persist seq across mounts or refreshes.
+  // mount means a blank screen — attach with since=0 and the server sends a
+  // full snapshot (screen + scrollback); the client scrolls to the live prompt.
   //
   // When `shareToken` is set, we attach over the public read-only share endpoint
   // (the token is the capability) instead of the cookie-authed session endpoint.

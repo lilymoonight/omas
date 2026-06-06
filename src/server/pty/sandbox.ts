@@ -13,10 +13,13 @@
 //
 // Two backends, picked by platform:
 //   - Linux  → bubblewrap (`bwrap`): rebinds `/` read-only, then the working dir
-//     and home read-write, with a private tmpfs /tmp. When the server runs as
-//     root, the sandbox additionally remaps to a non-root uid (a fresh user
-//     namespace) so agents that refuse to run as root (e.g. `claude
-//     --dangerously-skip-permissions`) still work — see sandboxUnprivIds().
+//     and home read-write, with a private tmpfs /tmp. The sandbox keeps the
+//     server's uid (including root) so ~/.ssh and other credentials stay usable.
+//     `IS_SANDBOX=1` (ai-safe pattern) tells Claude Code the host already
+//     confined the session, so `--dangerously-skip-permissions` works as root.
+//     When the server runs as root, `--unshare-user` (no uid remap) scopes
+//     CAP_SYS_ADMIN so a sandboxed root cannot `mount -o remount,rw` past the
+//     read-only binds — same hardening as ai-safe.
 //   - macOS  → `sandbox-exec` (Seatbelt): a `(deny default)(allow file-read*)`
 //     profile that permits file-write* under the working dir, home, and /dev.
 //
@@ -33,6 +36,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { serverIsRoot } from './os-user.js';
 
 export type SandboxSettings = {
   /** Writable ceiling. Every sandboxed session's writable dir must be within it. */
@@ -113,22 +117,24 @@ export function buildBwrapArgv(opts: {
   devBinds?: string[];
   /** GPU nodes overlaid on `--dev /dev` via --dev-bind-try (ai-safe pattern). */
   gpuDevBindTry?: string[];
+  /** Linux: passthrough the host ssh-agent socket (bwrap uses a private /tmp). */
+  sshAuthSock?: string;
   /** setsid() for TIOCSTI-injection hardening. Off by default: it detaches the
    *  controlling tty, which can break interactive job control over a PTY. */
   newSession?: boolean;
   /**
-   * When set, run inside a fresh user namespace mapped to this uid/gid instead of
-   * keeping the caller's id. Used when the omas server runs as ROOT: without it
-   * the sandboxed process keeps uid 0, which trips tools that refuse to run as
-   * root (e.g. `claude --dangerously-skip-permissions`). Root creates the userns
-   * directly, so this works even where unprivileged user namespaces are disabled;
-   * root-owned paths (the writable dir, HOME, the tmpfs /tmp) remain writable as
-   * they map to this id. Leave undefined when the server is already unprivileged.
+   * Enter a user namespace without uid remap (ai-safe). On a root server this
+   * prevents remount-based escapes while keeping host root credentials in $HOME.
    */
+  unshareUser?: boolean;
+  /** Optional uid/gid remap inside the user namespace (legacy; unused by omas). */
   unprivUid?: number;
   unprivGid?: number;
 }): string[] {
-  const args: string[] = [
+  const args: string[] = [];
+  const userNs = opts.unshareUser || (opts.unprivUid != null && opts.unprivGid != null);
+  if (userNs) args.push('--unshare-user');
+  args.push(
     '--ro-bind', '/', '/', // entire filesystem, read-only
     '--dev', '/dev',
     '--proc', '/proc',
@@ -139,15 +145,17 @@ export function buildBwrapArgv(opts: {
     '--bind', opts.home, opts.home,
     '--chdir', opts.writable,
     '--setenv', 'HOME', opts.home,
+    // ai-safe: Claude accepts --dangerously-skip-permissions as root when set.
+    '--setenv', 'IS_SANDBOX', '1',
     '--die-with-parent',
-  ];
-  // Drop the in-namespace identity off root so agents that refuse to run as root
-  // work. Requires our own user namespace (root maps its uid 0 → this id).
+  );
   if (opts.unprivUid != null && opts.unprivGid != null) {
-    args.push('--unshare-user', '--uid', String(opts.unprivUid), '--gid', String(opts.unprivGid));
+    args.push('--uid', String(opts.unprivUid), '--gid', String(opts.unprivGid));
   }
   for (const dev of opts.gpuDevBindTry ?? []) args.push('--dev-bind-try', dev, dev);
   for (const dev of opts.devBinds ?? []) args.push('--dev-bind', dev, dev);
+  // Host ssh-agent lives outside the private tmpfs /tmp; bind the socket in.
+  if (opts.sshAuthSock) args.push('--bind', opts.sshAuthSock, opts.sshAuthSock);
   if (!opts.net) args.push('--unshare-net');
   if (opts.newSession) args.push('--new-session');
   args.push('--', opts.shell, ...(opts.shellArgs ?? []));
@@ -227,8 +235,10 @@ export function buildSandboxCommand(
     /** Linux: extra /dev nodes (default: auto-discovered GPU devices). */
     devBinds?: string[];
     gpuDevBindTry?: string[];
-    /** Linux only: remap the sandboxed process to this non-root id (set when the
-     *  server runs as root, so agents that refuse root still work). */
+    sshAuthSock?: string;
+    /** Linux: `--unshare-user` without uid remap (default: server runs as root). */
+    unshareUser?: boolean;
+    /** Legacy uid/gid remap inside the user namespace (unused by omas). */
     unprivUid?: number;
     unprivGid?: number;
   },
@@ -241,11 +251,12 @@ export function buildSandboxCommand(
       // HOME is the real home (writable via the profile); TMPDIR points at the
       // isolated .tmp so compliant tools default there, while the real /tmp stays
       // writable for tools that hardcode it.
-      env: { HOME: opts.home, TMPDIR: opts.tmp },
+      env: { HOME: opts.home, TMPDIR: opts.tmp, IS_SANDBOX: '1' },
     };
   }
   // Default: Linux bubblewrap.
   const gpuDevBindTry = opts.gpuDevBindTry ?? discoverGpuDevBinds('linux');
+  const unshareUser = opts.unshareUser ?? serverIsRoot();
   return {
     file: 'bwrap',
     args: buildBwrapArgv({
@@ -256,29 +267,36 @@ export function buildSandboxCommand(
       shellArgs: opts.shellArgs,
       gpuDevBindTry,
       devBinds: opts.devBinds,
+      sshAuthSock: opts.sshAuthSock,
+      unshareUser,
       unprivUid: opts.unprivUid,
       unprivGid: opts.unprivGid,
     }),
-    env: { HOME: opts.home },
+    env: { HOME: opts.home, IS_SANDBOX: '1' },
   };
 }
 
-/**
- * Pick the non-root uid/gid to remap a sandboxed session to when the server runs
- * as root (Linux). Prefers the human behind `sudo` (SUDO_UID/GID); falls back to
- * 1000 (the conventional first real user). Returns null when not applicable
- * (non-root server, or non-Linux) so the sandbox keeps the caller's identity.
- */
-export function sandboxUnprivIds(
-  platform: NodeJS.Platform = process.platform,
-): { uid: number; gid: number } | null {
-  if (platform !== 'linux') return null;
-  if (typeof process.getuid !== 'function' || process.getuid() !== 0) return null;
-  const su = Number(process.env.SUDO_UID);
-  const sg = Number(process.env.SUDO_GID);
-  const uid = Number.isInteger(su) && su > 0 ? su : 1000;
-  const gid = Number.isInteger(sg) && sg > 0 ? sg : uid;
-  return { uid, gid };
+/** Bind host ssh-agent socket into a Linux bwrap sandbox (private /tmp otherwise hides it). */
+export function resolveSshAuthSockBind(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const raw = env.SSH_AUTH_SOCK?.trim();
+  if (!raw) return undefined;
+  try {
+    const p = fs.realpathSync(raw);
+    return fs.statSync(p).isSocket() || fs.existsSync(p) ? p : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when bwrap can use `--unshare-user` (required for root-server sandboxes). */
+export function sandboxUserNamespaceAvailable(platform: NodeJS.Platform = process.platform): boolean {
+  if (platform !== 'linux') return true;
+  try {
+    execFileSync('bwrap', ['--unshare-user', '--ro-bind', '/', '/', '--', '/bin/true'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** True when a sandbox backend is available to actually enforce confinement. */
@@ -286,6 +304,8 @@ export function sandboxAvailable(platform: NodeJS.Platform = process.platform): 
   try {
     if (platform === 'linux') {
       execFileSync('bwrap', ['--version'], { stdio: 'ignore' });
+      // Root sandboxes always use --unshare-user; fail fast rather than a false sense of safety.
+      if (serverIsRoot() && !sandboxUserNamespaceAvailable(platform)) return false;
       return true;
     }
     if (platform === 'darwin') {

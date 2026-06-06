@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveSandboxDir, buildBwrapArgv, buildSeatbeltProfile, buildSandboxCommand, sandboxUnprivIds, discoverGpuDevBinds, buildGpuSeatbeltRules } from '../src/server/pty/sandbox.js';
+import { resolveSandboxDir, buildBwrapArgv, buildSeatbeltProfile, buildSandboxCommand, discoverGpuDevBinds, buildGpuSeatbeltRules } from '../src/server/pty/sandbox.js';
 
 describe('resolveSandboxDir', () => {
   const root = '/srv/agent';
@@ -98,40 +98,26 @@ describe('buildBwrapArgv', () => {
     // The remap flags must precede the `--` shell separator.
     expect(a.indexOf('--uid')).toBeLessThan(a.indexOf('--'));
   });
-});
 
-describe('sandboxUnprivIds', () => {
-  it('returns null on non-linux platforms', () => {
-    expect(sandboxUnprivIds('darwin')).toBeNull();
+  it('enters a user namespace without uid remap when unshareUser (ai-safe root hardening)', () => {
+    const a = buildBwrapArgv({ ...base, net: true, unshareUser: true });
+    expect(a[0]).toBe('--unshare-user');
+    expect(a.join(' ')).not.toContain('--uid');
+    expect(a.join(' ')).not.toContain('--gid');
   });
 
-  it('returns null on linux when the server is not root', () => {
-    const realGetuid = process.getuid;
-    try {
-      (process as any).getuid = () => 1000;
-      expect(sandboxUnprivIds('linux')).toBeNull();
-    } finally {
-      (process as any).getuid = realGetuid;
-    }
+  it('sets IS_SANDBOX so Claude accepts skip-permissions as root (ai-safe pattern)', () => {
+    const a = buildBwrapArgv({ ...base, net: true });
+    expect(a.join(' ')).toContain('--setenv IS_SANDBOX 1');
   });
 
-  it('prefers SUDO_UID/GID, falling back to 1000, when linux + root', () => {
-    const realGetuid = process.getuid;
-    const { SUDO_UID, SUDO_GID } = process.env;
-    try {
-      (process as any).getuid = () => 0;
-      process.env.SUDO_UID = '1234';
-      process.env.SUDO_GID = '5678';
-      expect(sandboxUnprivIds('linux')).toEqual({ uid: 1234, gid: 5678 });
-
-      delete process.env.SUDO_UID;
-      delete process.env.SUDO_GID;
-      expect(sandboxUnprivIds('linux')).toEqual({ uid: 1000, gid: 1000 });
-    } finally {
-      (process as any).getuid = realGetuid;
-      if (SUDO_UID === undefined) delete process.env.SUDO_UID; else process.env.SUDO_UID = SUDO_UID;
-      if (SUDO_GID === undefined) delete process.env.SUDO_GID; else process.env.SUDO_GID = SUDO_GID;
-    }
+  it('binds the host ssh-agent socket when requested', () => {
+    const a = buildBwrapArgv({
+      ...base,
+      net: true,
+      sshAuthSock: '/tmp/ssh-abc/agent.0',
+    });
+    expect(a.join(' ')).toContain('--bind /tmp/ssh-abc/agent.0 /tmp/ssh-abc/agent.0');
   });
 });
 
@@ -192,7 +178,13 @@ describe('buildSandboxCommand (platform dispatch)', () => {
     expect(c.file).toBe('bwrap');
     expect(c.args.join(' ')).toContain('--bind /w/proj /w/proj');
     expect(c.args.join(' ')).toContain('--bind /Users/dev /Users/dev');
-    expect(c.env).toEqual({ HOME: '/Users/dev' });
+    expect(c.env).toEqual({ HOME: '/Users/dev', IS_SANDBOX: '1' });
+  });
+
+  it('enables --unshare-user on linux when the server runs as root', () => {
+    const c = buildSandboxCommand('linux', { ...opts, unshareUser: true });
+    expect(c.args[0]).toBe('--unshare-user');
+    expect(c.args.join(' ')).not.toContain('--uid');
   });
 
   it('uses sandbox-exec on darwin with real HOME (writable) + TMPDIR in the working dir', () => {
@@ -203,7 +195,7 @@ describe('buildSandboxCommand (platform dispatch)', () => {
     expect(c.args[1]).toContain('(allow file-write* (subpath "/Users/dev"))');
     // shell follows the profile
     expect(c.args.slice(2)).toEqual(['/bin/bash']);
-    expect(c.env).toEqual({ HOME: '/Users/dev', TMPDIR: '/w/proj/.tmp' });
+    expect(c.env).toEqual({ HOME: '/Users/dev', TMPDIR: '/w/proj/.tmp', IS_SANDBOX: '1' });
   });
 
   it('passes shellArgs through (e.g. exec sh -c)', () => {

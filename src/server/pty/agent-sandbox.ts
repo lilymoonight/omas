@@ -3,7 +3,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { buildSessionRcContent, sessionShellArgs, shellKind, writeSessionRc } from './cwd-report.js';
 
-/** Claude Code: skip permission prompts in confined sandboxes. */
+/** Claude Code: skip permission prompts in confined sandboxes (requires IS_SANDBOX=1 as root). */
 export const CLAUDE_SKIP_PERMISSIONS = '--dangerously-skip-permissions';
 /** Cursor agent CLI: auto-approve tool use (same intent as Claude's skip-permissions). */
 export const CURSOR_AGENT_YOLO = '--yolo';

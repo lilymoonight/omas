@@ -193,6 +193,17 @@
     });
   }
 
+  function onHostWheel(e: WheelEvent): void {
+    // Alt-screen TUIs often keep viewportY at "bottom" while the user wheels
+    // into main-buffer scrollback — treat upward wheel as explicit intent.
+    if (e.deltaY < 0) {
+      userScrolledUp = true;
+      lastViewportY = readViewportY(term);
+      return;
+    }
+    refreshScrollIntentFromGesture();
+  }
+
   function onTerminalScroll(): void {
     if (suppressScrollIntent || pendingScrollBottom) return;
     if (scrollIntentRaf !== undefined) cancelAnimationFrame(scrollIntentRaf);
@@ -220,7 +231,8 @@
       clearTimeout(restoreScrollTimer);
       restoreScrollTimer = undefined;
     }
-    pinLive();
+    userScrolledUp = false;
+    pinLive(true);
   }
 
   function scheduleRestoreScrollFallback(): void {
@@ -306,7 +318,7 @@
       if (!canSyncSize()) return;
       syncSizeToServer();
       stickToLiveScreen = false;
-      pinLive();
+      pinLive(true);
     });
   }
 
@@ -588,7 +600,7 @@
     // geometry. A resize/reflow or TUI redraw transiently moves viewportY, and
     // reading that as "scrolled up" is exactly what snapped the viewport to old
     // scrollback at random. Wheel + scroll keys cover scrolling up and back.
-    host.addEventListener('wheel', refreshScrollIntentFromGesture, { passive: true });
+    host.addEventListener('wheel', onHostWheel, { passive: true });
     scrollSub = term.onScroll(onTerminalScroll);
     term.attachCustomKeyEventHandler((e) => {
       // Cmd/Ctrl+F opens scrollback search instead of the browser's find — but
@@ -605,8 +617,10 @@
         openSearch();
         return false;
       }
-      if (e.type === 'keydown' && (e.key === 'PageUp' || e.key === 'PageDown'
-        || (e.shiftKey && (e.key === 'Home' || e.key === 'End')))) {
+      if (e.type === 'keydown' && (e.key === 'PageUp' || (e.shiftKey && e.key === 'Home'))) {
+        userScrolledUp = true;
+      } else if (e.type === 'keydown' && (e.key === 'PageDown'
+        || (e.shiftKey && e.key === 'End'))) {
         refreshScrollIntentFromGesture();
       }
       return true;
@@ -625,7 +639,7 @@
     if (syncDebounceTimer !== undefined) clearTimeout(syncDebounceTimer);
     if (resizeRaf !== undefined) cancelAnimationFrame(resizeRaf);
     if (scrollIntentRaf !== undefined) cancelAnimationFrame(scrollIntentRaf);
-    host?.removeEventListener('wheel', refreshScrollIntentFromGesture);
+    host?.removeEventListener('wheel', onHostWheel);
     scrollSub?.dispose();
     resizeObserver?.disconnect();
     socket?.close();

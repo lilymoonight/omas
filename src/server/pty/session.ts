@@ -17,7 +17,7 @@ type HeadlessTerminal = InstanceType<typeof HeadlessTerminal>;
 type SerializeAddon = InstanceType<typeof SerializeAddon>;
 import { RingBuffer } from './ring.js';
 import { ptyLocaleEnv } from './locale.js';
-import { resolveSandboxDir, buildSandboxCommand, sandboxUnprivIds, type SandboxSettings } from './sandbox.js';
+import { resolveSandboxDir, buildSandboxCommand, resolveSshAuthSockBind, type SandboxSettings } from './sandbox.js';
 import { sessionShellArgs, sessionShellEnv, writeSessionRc } from './cwd-report.js';
 import { augmentSandboxAgentCommand, writeSandboxAgentRc } from './agent-sandbox.js';
 import { Osc7CwdParser } from './osc-cwd.js';
@@ -147,7 +147,7 @@ export class PtySession extends EventEmitter {
       fs.mkdirSync(resolved.tmp, { recursive: true });
       const writable = fs.realpathSync(resolved.writable);
       // Use the operator's REAL home (writable) so agents can read AND write
-      // their existing config/credentials/state (~/.claude, ~/.cursor, …).
+      // their existing config/credentials/state (~/.claude, ~/.cursor, ~/.ssh).
       const home = fs.realpathSync(os.homedir());
       rcHome = home;
       const spec = {
@@ -160,7 +160,7 @@ export class PtySession extends EventEmitter {
       this.cwd = writable;
       this.sandboxed = true;
       this.sandboxSpec = spec;
-      const unpriv = sandboxUnprivIds();
+      const sshAuthSock = resolveSshAuthSockBind();
       const rcPath = writeSandboxAgentRc(spec.tmp, home, this.shell);
       const shellArgs = rcPath ? sessionShellArgs(this.shell, rcPath) : [];
       const rcEnv = rcPath ? sessionShellEnv(this.shell, path.dirname(rcPath)) : {};
@@ -168,8 +168,7 @@ export class PtySession extends EventEmitter {
         ...spec,
         shell: this.shell,
         shellArgs,
-        unprivUid: unpriv?.uid,
-        unprivGid: unpriv?.gid,
+        sshAuthSock,
       });
       spawnFile = cmd.file;
       spawnArgs = cmd.args;
@@ -296,13 +295,11 @@ export class PtySession extends EventEmitter {
     let args: string[];
     const env = { ...process.env, ...ptyLocaleEnv() } as Record<string, string>;
     if (this.sandboxSpec) {
-      const unpriv = sandboxUnprivIds();
       const cmd = buildSandboxCommand(process.platform, {
         ...this.sandboxSpec,
         shell: '/bin/sh',
         shellArgs: ['-c', command],
-        unprivUid: unpriv?.uid,
-        unprivGid: unpriv?.gid,
+        sshAuthSock: resolveSshAuthSockBind(),
       });
       file = cmd.file;
       args = cmd.args;
@@ -404,11 +401,7 @@ export class PtySession extends EventEmitter {
     }
   }
 
-  /** Serialize the live screen for attach/reconnect. Scrollback is omitted on
-   *  purpose: replaying thousands of scrollback lines leaves the browser
-   *  viewport stuck at the top (Cursor/Claude TUI "jumps to ancient history").
-   *  The headless mirror still accumulates scrollback for debugging; only
-   *  the active buffer is shipped to clients. */
+  /** Serialize the live screen only (cheap; used where scrollback is unnecessary). */
   serializeSnapshot(): { bytes: Buffer; cols: number; rows: number } {
     this.flushHeadless();
     if (

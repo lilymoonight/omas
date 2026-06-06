@@ -11,6 +11,13 @@
   import { setTabTitle, folderBasename } from '../lib/page-title.js';
   import { estimateTermSize } from '../lib/term-size.js';
   import { NARROW_BREAKPOINT } from '../lib/term-layout.js';
+  import {
+    filesBrowseRoot,
+    sandboxBadgeLabel,
+    sandboxBadgeMode,
+    sandboxBadgeTitle,
+  } from '../lib/sandbox-state.js';
+  import type { RuntimeInfo } from '../lib/api.js';
   import type { Session } from '../../shared/session.js';
   import type { Component } from 'svelte';
   import Icon from '../components/Icon.svelte';
@@ -87,6 +94,10 @@
   let shareToken = $state<string | null>(null);
   let shareBusy = $state(false);
   let shareCopied = $state(false);
+  let runtime = $state<RuntimeInfo | null>(null);
+
+  const sandboxMode = $derived(session ? sandboxBadgeMode(session) : 'off');
+  const sandboxTitle = $derived(session ? sandboxBadgeTitle(session, runtime) : '');
 
   function shareUrl(token: string): string {
     return `${location.origin}${location.pathname}${location.search}#/shared/${token}`;
@@ -150,7 +161,9 @@
 
   function handleShellCwd(path: string): void {
     if (session) session = { ...session, liveCwd: path };
-    if (drawerLeft) filesPanel?.onCwdChange(path);
+    if (drawerLeft && session) {
+      filesPanel?.onCwdChange(filesBrowseRoot(session, path));
+    }
     if (drawerRight) gitPanel?.onCwdChange(path);
     const folder = folderBasename(path);
     if (folder) setTabTitle({ folder });
@@ -272,6 +285,7 @@
       const s = await api.getSession(sessionId);
       session = s;
       title = s.title;
+      api.runtimeCached().then((r) => (runtime = r)).catch(() => { /* ignore */ });
       api.getShare(sessionId).then((r) => (shareToken = r.token)).catch(() => { /* ignore */ });
     } catch (e) {
       if (String(e).includes('404')) notFound = true;
@@ -352,6 +366,16 @@
     <span class="title">{title}</span>
 
     <div class="spacer"></div>
+
+    {#if session}
+      <span
+        class="sandbox-pill sandbox-{sandboxMode}"
+        title={sandboxTitle}
+      >
+        <Icon name="shield" size={12} />
+        <span class="sandbox-text">{sandboxBadgeLabel(sandboxMode)}</span>
+      </span>
+    {/if}
 
     <span class="status status-{status}" title={STATUS_LABEL[status]}>
       <span class="dot"><Icon name="circle" size={8} /></span>
@@ -474,7 +498,13 @@
     {#if session}
       <div class="side-slot left">
         {#if drawerLeft}
-          <FilesPanel bind:this={filesPanel} {sessionId} onNewSession={newSessionInDir} />
+          <FilesPanel
+            bind:this={filesPanel}
+            {sessionId}
+            sandboxed={session.sandboxed === true}
+            workspace={session.cwd}
+            onNewSession={newSessionInDir}
+          />
         {/if}
       </div>
     {/if}
@@ -651,6 +681,31 @@
     white-space: nowrap;
   }
   .spacer { flex: 1; }
+
+  .sandbox-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: default;
+    white-space: nowrap;
+  }
+  .sandbox-pill > :global(svg) { flex-shrink: 0; }
+  .sandbox-off {
+    background: var(--bg-hover);
+    color: var(--fg-muted);
+  }
+  .sandbox-inside {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+  .sandbox-outside {
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
 
   .status {
     display: inline-flex; align-items: center; gap: 6px;
@@ -838,7 +893,8 @@
 
   @media (max-width: 768px) {
     .status-text,
-    .exited-text {
+    .exited-text,
+    .sandbox-text {
       display: none;
     }
 

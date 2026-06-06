@@ -35,6 +35,34 @@ export async function sessionCwd(session: PtySession): Promise<string | null> {
   return (await shellCwdForSession(session.pid, session.shell)) ?? session.cwd ?? null;
 }
 
+export type FsBrowseContext = {
+  /** Directory used as the root for sidebar list/read/download. */
+  root: string | null;
+  liveCwd: string | null;
+  /** Session workspace (sandbox writable dir at spawn); set when sandboxed. */
+  workspace: string | null;
+  /** True when sandboxed and live cwd is outside the writable workspace. */
+  readOnly: boolean;
+};
+
+/** Sidebar follows the shell's live cwd; read-only areas outside workspace are listable. */
+export async function fsBrowseContext(session: PtySession): Promise<FsBrowseContext> {
+  const workspace = session.sandboxed ? (session.cwd || null) : null;
+  const live = await sessionCwd(session);
+  const readOnly = !!(workspace && live && !isUnderRoot(workspace, live));
+  return { root: live, liveCwd: live, workspace, readOnly };
+}
+
+export async function fsBrowseRoot(session: PtySession): Promise<string | null> {
+  return sessionCwd(session);
+}
+
+/** Whether a sandboxed session may write to this absolute path (workspace only). */
+export function sandboxAllowsWrite(session: PtySession, absPath: string): boolean {
+  if (!session.sandboxed) return true;
+  return isUnderRoot(session.cwd, absPath);
+}
+
 export function resolveUnderCwd(
   cwd: string,
   relPath: string,

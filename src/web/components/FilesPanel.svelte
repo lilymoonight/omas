@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { api, type FsEntry } from '../lib/api.js';
   import { fsEntriesEqual } from '../lib/stable-update.js';
+  import { isPathUnder } from '../lib/fs-path.js';
   import Icon from './Icon.svelte';
   import type { Component } from 'svelte';
 
@@ -15,9 +16,15 @@
 
   interface Props {
     sessionId: string;
+    sandboxed?: boolean;
+    workspace?: string;
     onNewSession?: (absDir: string) => void;
   }
-  const { sessionId, onNewSession }: Props = $props();
+  const { sessionId, sandboxed = false, workspace = '', onNewSession }: Props = $props();
+
+  function updateReadOnly(path: string): void {
+    readOnly = !!(sandboxed && workspace && !isPathUnder(workspace, path));
+  }
 
   /** Absolute path for a cwd-relative tree entry (root is the live cwd). */
   function absOf(rel: string): string {
@@ -30,6 +37,7 @@
   }
 
   let root = $state<string | null>(null);
+  let readOnly = $state(false);
   let error = $state<string | null>(null);
   let loadingRoot = $state(true);
   let expanded = $state<Set<string>>(new Set());
@@ -49,6 +57,7 @@
   export function onCwdChange(path: string): void {
     const cwdChanged = root !== path;
     root = path;
+    updateReadOnly(path);
     error = null;
     loadingRoot = false;
     if (cwdChanged) {
@@ -69,9 +78,10 @@
     if (inFlight) return;
     inFlight = true;
     try {
-      const { cwd } = await api.fsCwd(sessionId);
-      const cwdChanged = root !== null && root !== cwd;
-      root = cwd;
+      const resp = await api.fsCwd(sessionId);
+      const cwdChanged = root !== null && root !== resp.cwd;
+      root = resp.cwd;
+      readOnly = resp.readOnly === true;
       error = null;
       if (resetExpanded || cwdChanged) {
         expanded = new Set([ROOT_KEY]);
@@ -180,6 +190,9 @@
       <span class="cwd-name">{root.split('/').filter(Boolean).pop() ?? root}</span>
     </div>
     <p class="cwd-path" title={root}>{root}</p>
+    {#if readOnly}
+      <p class="readonly-hint">只读浏览（沙箱外目录不可写入）</p>
+    {/if}
 
     {#if error}
       <p class="hint error">{error}</p>
@@ -382,6 +395,12 @@
     text-align: left;
     direction: ltr;
     flex-shrink: 0;
+  }
+  .readonly-hint {
+    margin: 0;
+    padding: 0 4px 4px;
+    font-size: 11px;
+    color: var(--warning);
   }
 
   .hint {
