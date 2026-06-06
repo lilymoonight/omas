@@ -96,6 +96,7 @@ export type FsCwdResp = {
   sandboxed?: boolean;
   readOnly?: boolean;
 };
+export type FsUploadResp = { ok: true; path: string; name: string; size: number };
 
 export type PublicSite = { slug: string; url: string; spa: boolean; root: string; cli: boolean };
 export type SitesResp = { canPersist: boolean; sites: PublicSite[] };
