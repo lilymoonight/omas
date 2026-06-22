@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import path from 'node:path';
 import { z } from 'zod';
 import { logger } from '../logger.js';
+import { collectDirEntries, renderDirListingHtml } from './dir-listing.js';
 import { mimeFor, resolveWithinRoot } from './util.js';
 import { SiteError, type ResolvedSite, type SiteManager } from './manager.js';
 
@@ -16,11 +16,10 @@ type App = {
 const createSchema = z.object({
   slug: z.string().min(1).max(64),
   root: z.string().min(1).max(4096),
-  spa: z.boolean().optional(),
 });
 
 function siteJson(site: ResolvedSite, mgr: SiteManager) {
-  return { slug: site.slug, url: `/p/${site.slug}/`, root: site.root, spa: site.spa, cli: mgr.isCli(site.slug) };
+  return { slug: site.slug, url: `/p/${site.slug}/`, root: site.root, cli: mgr.isCli(site.slug) };
 }
 
 function sendFile(reply: any, abs: string, size: number): unknown {
@@ -37,128 +36,19 @@ function notFound(reply: any): unknown {
   return reply.code(404).type('text/plain; charset=utf-8').send('404 Not Found');
 }
 
-async function serveIndexFallback(reply: any, site: ResolvedSite): Promise<unknown> {
-  const index = path.join(site.root, 'index.html');
-  try {
-    const st = await fsp.stat(index);
-    if (st.isFile()) return sendFile(reply, index, st.size);
-  } catch {
-    /* no index */
-  }
-  return notFound(reply);
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function fmtSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ['KB', 'MB', 'GB', 'TB'];
-  let v = bytes / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[i]}`;
-}
-
 /**
- * Render a Python `http.server`-style directory index for a folder that has no
- * `index.html`. `urlPath` is the request path (already ending in `/`) and is
- * used both to build relative links and to know whether a parent link applies.
+ * Render a browsable directory index with breadcrumb navigation, date grouping,
+ * and a NEW badge on the most recent date section.
  */
 async function renderDirListing(reply: any, absDir: string, urlPath: string, slugRootPath: string): Promise<unknown> {
-  let names: fs.Dirent[];
-  try {
-    names = await fsp.readdir(absDir, { withFileTypes: true });
-  } catch {
-    return notFound(reply);
-  }
+  const entries = await collectDirEntries(absDir, fsp.readdir, fsp.stat);
+  if (entries === null) return notFound(reply);
 
-  // Resolve symlinks (to know dir-ness) in parallel so a big dir doesn't serialize stats.
-  const classified = await Promise.all(
-    names.map(async (d) => {
-      let isDir = d.isDirectory();
-      if (d.isSymbolicLink()) {
-        try {
-          isDir = (await fsp.stat(path.join(absDir, d.name))).isDirectory();
-        } catch {
-          return null;
-        }
-      }
-      return { d, isDir };
-    }),
-  );
-  const dirs: fs.Dirent[] = [];
-  const files: fs.Dirent[] = [];
-  for (const c of classified) {
-    if (!c) continue;
-    (c.isDir ? dirs : files).push(c.d);
-  }
-  const byName = (a: fs.Dirent, b: fs.Dirent) => a.name.localeCompare(b.name, undefined, { numeric: true });
-  dirs.sort(byName);
-  files.sort(byName);
+  const normalizedUrl = urlPath.replace(/\/+$/, '/');
+  const normalizedRoot = slugRootPath.replace(/\/+$/, '/');
+  const showParent = normalizedUrl !== normalizedRoot;
 
-  // File sizes in parallel too.
-  const sizes = await Promise.all(
-    files.map(async (f) => {
-      try {
-        return fmtSize((await fsp.stat(path.join(absDir, f.name))).size);
-      } catch {
-        return '';
-      }
-    }),
-  );
-
-  const rows: string[] = [];
-  // A parent link, unless we are already at the site root.
-  if (urlPath.replace(/\/+$/, '/') !== slugRootPath) {
-    rows.push('<li class="dir"><a href="../">../</a></li>');
-  }
-  for (const d of dirs) {
-    const enc = encodeURIComponent(d.name);
-    rows.push(`<li class="dir"><a href="${enc}/">${escapeHtml(d.name)}/</a></li>`);
-  }
-  files.forEach((f, i) => {
-    const enc = encodeURIComponent(f.name);
-    rows.push(
-      `<li class="file"><a href="${enc}">${escapeHtml(f.name)}</a><span class="size">${sizes[i]}</span></li>`,
-    );
-  });
-
-  const title = escapeHtml(decodeURIComponent(urlPath));
-  const html = `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Index of ${title}</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 0; padding: 24px; line-height: 1.6; }
-  h1 { font-size: 16px; font-weight: 600; margin: 0 0 16px; word-break: break-all; }
-  ul { list-style: none; margin: 0; padding: 0; max-width: 760px; }
-  li { display: flex; justify-content: space-between; gap: 16px; padding: 2px 8px; border-radius: 6px; }
-  li:hover { background: rgba(127,127,127,0.12); }
-  a { text-decoration: none; }
-  a:hover { text-decoration: underline; }
-  .dir a { font-weight: 600; }
-  .size { opacity: 0.55; font-size: 12px; white-space: nowrap; }
-</style>
-</head>
-<body>
-<h1>Index of ${title}</h1>
-<ul>
-${rows.join('\n')}
-</ul>
-</body>
-</html>`;
+  const html = renderDirListingHtml(urlPath, slugRootPath, entries, showParent);
   reply.header('content-type', 'text/html; charset=utf-8');
   reply.header('cache-control', 'no-cache');
   return reply.send(html);
@@ -182,7 +72,7 @@ export function registerSiteRoutes(app: App, mgr: SiteManager): void {
     const parsed = createSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: 'invalid_body', issues: parsed.error.issues });
     try {
-      const site = mgr.addOrUpdate({ slug: parsed.data.slug, root: parsed.data.root, spa: !!parsed.data.spa });
+      const site = mgr.addOrUpdate({ slug: parsed.data.slug, root: parsed.data.root });
       return reply.code(201).send(siteJson(site, mgr));
     } catch (err) {
       if (err instanceof SiteError) return reply.code(err.status).send({ error: err.code, message: err.message });
@@ -223,22 +113,13 @@ export function registerSiteRoutes(app: App, mgr: SiteManager): void {
     try {
       st = await fsp.stat(abs);
     } catch {
-      return site.spa ? serveIndexFallback(reply, site) : notFound(reply);
+      return notFound(reply);
     }
 
     if (st.isDirectory()) {
       const pathPart = String(req.url).split('?')[0] ?? '';
       if (!pathPart.endsWith('/')) return redirectWithSlash(req, reply);
-      const index = path.join(abs, 'index.html');
-      try {
-        const ist = await fsp.stat(index);
-        if (ist.isFile()) return sendFile(reply, index, ist.size);
-      } catch {
-        /* no index in this dir */
-      }
-      // SPA sites route every missing path back to their root index.html;
-      // plain sites fall back to a Python-style browsable directory listing.
-      return site.spa ? serveIndexFallback(reply, site) : renderDirListing(reply, abs, pathPart, `/p/${site.slug}/`);
+      return renderDirListing(reply, abs, pathPart, `/p/${site.slug}/`);
     }
 
     if (st.isFile()) return sendFile(reply, abs, st.size);

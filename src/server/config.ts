@@ -7,7 +7,6 @@ import { z } from 'zod';
 export const siteSpecSchema = z.object({
   slug: z.string().min(1),
   root: z.string().min(1),
-  spa: z.boolean().optional(),
 });
 
 export const sandboxConfigSchema = z.object({

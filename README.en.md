@@ -48,7 +48,7 @@ A self-hosted web terminal for AI-assisted development. Not an agent, not an IDE
 
 ### Sharing & hosting
 
-- **Public static sites (no auth)** — mount any directory at `/p/<slug>/` for password-free access, to share build output, reports, etc. as web pages. A **publish admin page** adds/removes sites online, persists changes, and **takes effect immediately without a restart**; missing `index.html` falls back to a Python `http.server`-style **directory listing**; SPA mode falls back to `index.html`; built-in path-traversal protection (rejects `..` / absolute paths / NUL).
+- **Public static sites (no auth)** — mount any directory at `/p/<slug>/` for password-free access, to share build output, reports, etc. as web pages. A **publish admin page** adds/removes sites online, persists changes, and **takes effect immediately without a restart**; directory URLs show a styled **browse page** with breadcrumbs and date grouping (NEW on the latest date); missing files return 404; built-in path-traversal protection (rejects `..` / absolute paths / NUL).
 
 ### Deploy & ops
 

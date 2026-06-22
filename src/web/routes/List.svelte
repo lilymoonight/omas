@@ -305,7 +305,6 @@
           <li class="site">
             <a class="site-link" href={siteHref(site.slug)} target="_blank" rel="noopener" title={site.root}>
               <span class="site-slug">/p/{site.slug}/</span>
-              {#if site.spa}<span class="site-tag">SPA</span>{/if}
               <span class="site-root">{site.root}</span>
             </a>
             <button

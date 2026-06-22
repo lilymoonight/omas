@@ -71,12 +71,6 @@ program
     [] as string[],
   )
   .option(
-    '--publish-spa <slug=dir>',
-    '同 --publish，但找不到文件时回退 index.html（适合 SPA，可重复）',
-    collectKeyVal,
-    [] as string[],
-  )
-  .option(
     '--sandbox-root <dir>',
     '开启沙箱：会话默认只读整个文件系统，仅其工作目录（须在此目录内）可写（Linux 用 bwrap / macOS 用 sandbox-exec）',
   )
@@ -89,7 +83,7 @@ program
   OMAS_PASSWORD=secret omas serve
   omas serve --port 8080 --cwd ~/projects/my-app
   omas serve --password-file /run/omas/password
-  omas serve --publish report=./dist --publish-spa app=./build
+  omas serve --publish report=./dist
   omas serve --sandbox-root /srv/agent     # 开启沙箱，可写区限制在 /srv/agent 下
 
 公开站点: --publish 的目录挂在 /p/<slug>/，不需要密码即可访问，便于分享工作结果。
@@ -110,7 +104,6 @@ program
       passwordInline: opts.password,
       passwordFile: opts.passwordFile,
       publish: opts.publish,
-      publishSpa: opts.publishSpa,
       sandboxRoot: opts.sandboxRoot,
       sandboxNet: opts.sandboxNoNet ? false : undefined,
       sandboxDefault: opts.sandboxDefaultOff ? false : undefined,

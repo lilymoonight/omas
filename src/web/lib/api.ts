@@ -98,7 +98,7 @@ export type FsCwdResp = {
 };
 export type FsUploadResp = { ok: true; path: string; name: string; size: number };
 
-export type PublicSite = { slug: string; url: string; spa: boolean; root: string; cli: boolean };
+export type PublicSite = { slug: string; url: string; root: string; cli: boolean };
 export type SitesResp = { canPersist: boolean; sites: PublicSite[] };
 
 export type UploadOpts = {
@@ -297,7 +297,7 @@ export const api = {
   sharedMeta: (token: string) =>
     req<{ ok: true; title: string; cols: number; rows: number }>('GET', `shared/${encodeURIComponent(token)}`),
   listSites: () => req<SitesResp>('GET', 'sites'),
-  createSite: (input: { slug: string; root: string; spa?: boolean }) =>
+  createSite: (input: { slug: string; root: string }) =>
     req<PublicSite>('POST', 'sites', input),
   deleteSite: (slug: string) => req<{ ok: boolean }>('DELETE', `sites/${encodeURIComponent(slug)}`),
   history: (opts?: HistorySource[] | { sources?: HistorySource[]; refresh?: boolean }) => {

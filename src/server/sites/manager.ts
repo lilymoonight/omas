@@ -76,7 +76,7 @@ export class SiteManager {
   }
 
   private configSpecs(): SiteSpec[] {
-    return (this.cfg.sites ?? []).map((s) => ({ slug: s.slug, root: s.root, spa: !!s.spa }));
+    return (this.cfg.sites ?? []).map((s) => ({ slug: s.slug, root: s.root }));
   }
 
   private recompute(): void {
@@ -85,7 +85,7 @@ export class SiteManager {
   }
 
   /** Add or replace a persistent (config) site, then persist + reload. */
-  addOrUpdate(input: { slug: string; root: string; spa: boolean }): ResolvedSite {
+  addOrUpdate(input: { slug: string; root: string }): ResolvedSite {
     this.assertPersistable();
     const slug = input.slug.trim();
     if (!isValidSlug(slug)) {
@@ -106,7 +106,7 @@ export class SiteManager {
     if (!st.isDirectory()) throw new SiteError('root_not_dir', 400, `不是目录：${root}`);
 
     const next = this.configSpecs().filter((s) => s.slug !== slug);
-    next.push({ slug, root, spa: input.spa });
+    next.push({ slug, root });
     this.persist(next);
     return this.registry.get(slug)!;
   }
@@ -134,7 +134,7 @@ export class SiteManager {
   }
 
   private persist(specs: SiteSpec[]): void {
-    this.cfg.sites = specs.map((s) => ({ slug: s.slug, root: s.root, spa: s.spa }));
+    this.cfg.sites = specs.map((s) => ({ slug: s.slug, root: s.root }));
     saveConfig(this.dir, this.cfg);
     this.recompute();
     logger.info({ count: specs.length }, 'persisted public site config');

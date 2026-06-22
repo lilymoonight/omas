@@ -8,8 +8,6 @@ export type SiteSpec = {
   slug: string;
   /** Filesystem directory to serve (may be relative; resolved later). */
   root: string;
-  /** Fall back to index.html for unknown paths (single-page apps). */
-  spa: boolean;
 };
 
 const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -19,13 +17,13 @@ export function isValidSlug(slug: string): boolean {
 }
 
 /**
- * Parse `--publish slug=dir` (and `--publish-spa slug=dir`) CLI values into
- * site specs. Throws on malformed entries so the operator gets a clear error
- * instead of a silently-ignored mount. Duplicate slugs: last one wins.
+ * Parse `--publish slug=dir` CLI values into site specs. Throws on malformed
+ * entries so the operator gets a clear error instead of a silently-ignored
+ * mount. Duplicate slugs: last one wins.
  */
-export function parsePublishArgs(plain: string[], spa: string[]): SiteSpec[] {
+export function parsePublishArgs(values: string[]): SiteSpec[] {
   const bySlug = new Map<string, SiteSpec>();
-  const add = (raw: string, isSpa: boolean): void => {
+  for (const raw of values) {
     const eq = raw.indexOf('=');
     if (eq <= 0) {
       throw new Error(`--publish 需要 slug=目录 格式，收到：${JSON.stringify(raw)}`);
@@ -38,10 +36,8 @@ export function parsePublishArgs(plain: string[], spa: string[]): SiteSpec[] {
     if (!root) {
       throw new Error(`站点 ${JSON.stringify(slug)} 缺少目录路径`);
     }
-    bySlug.set(slug, { slug, root, spa: isSpa });
-  };
-  for (const v of plain) add(v, false);
-  for (const v of spa) add(v, true);
+    bySlug.set(slug, { slug, root });
+  }
   return [...bySlug.values()];
 }
 

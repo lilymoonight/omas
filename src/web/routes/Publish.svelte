@@ -14,7 +14,6 @@
   // New-site form.
   let slug = $state('');
   let root = $state('');
-  let spa = $state(false);
   let submitting = $state(false);
 
   function siteHref(s: string): string {
@@ -47,10 +46,9 @@
     submitting = true;
     error = null;
     try {
-      await api.createSite({ slug: s, root: r, spa });
+      await api.createSite({ slug: s, root: r });
       slug = '';
       root = '';
-      spa = false;
       await load();
     } catch (e) {
       error = humanError(e);
@@ -159,10 +157,6 @@
       </label>
     </div>
     <div class="form-actions">
-      <label class="spa-toggle">
-        <input type="checkbox" bind:checked={spa} disabled={!canPersist || submitting} />
-        <span>SPA 回退（找不到文件时返回 index.html）</span>
-      </label>
       <button class="primary" onclick={addSite} disabled={!canPersist || submitting}>
         {#if submitting}<Icon name="refresh" size={14} /> 发布中…{:else}<Icon name="plus" size={14} /> 发布{/if}
       </button>
@@ -184,7 +178,6 @@
           <div class="row-main">
             <div class="row-head">
               <a class="slug" href={siteHref(site.slug)} target="_blank" rel="noopener">/p/{site.slug}/</a>
-              {#if site.spa}<span class="tag">SPA</span>{/if}
               {#if site.cli}<span class="tag tag-cli" title="由命令行 --publish 提供，此处不可修改">命令行</span>{/if}
             </div>
             <div class="root mono" title={site.root}>{site.root}</div>
@@ -280,9 +273,7 @@
   }
   .input:focus { outline: none; border-color: var(--accent); }
   .mono { font-family: var(--mono, monospace); }
-  .form-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .spa-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg-muted); cursor: pointer; }
-  .spa-toggle input { cursor: pointer; }
+  .form-actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap; }
 
   .state { color: var(--fg-muted); font-size: 13px; }
   .empty {

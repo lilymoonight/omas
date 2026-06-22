@@ -49,8 +49,6 @@ export type ServerConfig = {
   passwordFile?: string;
   /** `slug=dir` entries from --publish (no-auth static sites). */
   publish?: string[];
-  /** `slug=dir` entries from --publish-spa (no-auth SPA sites). */
-  publishSpa?: string[];
   /** Writable ceiling for sandboxed sessions (enables sandboxing). CLI overrides config. */
   sandboxRoot?: string;
   /** Share host network inside the sandbox (default true). */
@@ -220,7 +218,7 @@ export async function createServer(config: ServerConfig) {
   // we won't accidentally persist a memory-only password.
   let cliSpecs: SiteSpec[] = [];
   try {
-    cliSpecs = parsePublishArgs(config.publish ?? [], config.publishSpa ?? []);
+    cliSpecs = parsePublishArgs(config.publish ?? []);
   } catch (err) {
     logger.error({ err: (err as Error).message }, 'invalid --publish argument');
     throw err;
